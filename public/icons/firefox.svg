@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <radialGradient id="ff-g1" cx="40%" cy="35%" r="60%">
+      <stop offset="0%" stop-color="#FF9500"/>
+      <stop offset="100%" stop-color="#FF6000"/>
+    </radialGradient>
+    <radialGradient id="ff-g2" cx="50%" cy="20%" r="70%">
+      <stop offset="0%" stop-color="#FF4000"/>
+      <stop offset="100%" stop-color="#C0392B"/>
+    </radialGradient>
+  </defs>
+  <!-- Globe base -->
+  <circle cx="50" cy="50" r="46" fill="#0060DF"/>
+  <!-- Flame -->
+  <ellipse cx="50" cy="55" rx="30" ry="32" fill="url(#ff-g1)"/>
+  <path d="M50 8c-23 0-42 19-42 42s19 42 42 42 42-19 42-42S73 8 50 8zm0 76c-18.8 0-34-15.2-34-34 0-7.7 2.6-14.8 6.9-20.4C24 35 28 45 35 50c-4-8 0-20 8-25-3 8 2 16 10 18-2-4 0-10 4-12-1 6 3 11 8 13 3 1 5 4 5 7 0 10-8 18-18 18-4 0-8-1.4-11-3.8 3 5.5 8.5 9.8 15 11L50 84z" fill="url(#ff-g2)" opacity="0.9"/>
+  <!-- Highlight -->
+  <ellipse cx="42" cy="30" rx="8" ry="6" fill="#FFD060" opacity="0.7" transform="rotate(-20,42,30)"/>
+</svg>

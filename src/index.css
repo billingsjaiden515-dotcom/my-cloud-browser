@@ -1,0 +1,108 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── CSS custom properties per theme ──────────────────────────────────────── */
+:root,
+.theme-dark {
+  --bg: #0f1117;
+  --surface: #1a1d27;
+  --surface-2: #22263a;
+  --border: #2e3349;
+  --primary: #6366f1;
+  --primary-hover: #818cf8;
+  --text: #e2e8f0;
+  --muted: #8892a4;
+  --error: #f87171;
+  --toolbar-h: 52px;
+  --tabbar-h: 36px;
+}
+
+.theme-light {
+  --bg: #f0f2f5;
+  --surface: #ffffff;
+  --surface-2: #f5f7fa;
+  --border: #d1d5db;
+  --primary: #4f46e5;
+  --primary-hover: #6366f1;
+  --text: #111827;
+  --muted: #6b7280;
+  --error: #ef4444;
+}
+
+.theme-midnight {
+  --bg: #050508;
+  --surface: #0d0d1a;
+  --surface-2: #12122b;
+  --border: #1e1e3f;
+  --primary: #7c3aed;
+  --primary-hover: #8b5cf6;
+  --text: #c4b5fd;
+  --muted: #6b7280;
+}
+
+.theme-ocean {
+  --bg: #030d1a;
+  --surface: #071828;
+  --surface-2: #0c2240;
+  --border: #164470;
+  --primary: #0ea5e9;
+  --primary-hover: #38bdf8;
+  --text: #bae6fd;
+  --muted: #64748b;
+}
+
+.theme-forest {
+  --bg: #0a120a;
+  --surface: #111c11;
+  --surface-2: #172017;
+  --border: #2d4a2d;
+  --primary: #22c55e;
+  --primary-hover: #4ade80;
+  --text: #bbf7d0;
+  --muted: #6b7280;
+}
+
+/* ─── Base ────────────────────────────────────────────────────────────────────── */
+* { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ─── Utility classes using CSS vars ─────────────────────────────────────────── */
+.bg-app     { background: var(--bg); }
+.bg-surface { background: var(--surface); }
+.bg-surface-2 { background: var(--surface-2); }
+.border-theme { border-color: var(--border); }
+.text-theme { color: var(--text); }
+.text-muted { color: var(--muted); }
+.text-primary { color: var(--primary); }
+.bg-primary { background: var(--primary); }
+
+/* ─── Scrollbar ───────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+/* ─── Focus ring ─────────────────────────────────────────────────────────────── */
+*:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+/* ─── Animation ─────────────────────────────────────────────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fadein { animation: fadeIn 0.15s ease; }

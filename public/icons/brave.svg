@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="brave-g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FB542B"/>
+      <stop offset="100%" stop-color="#FF7654"/>
+    </linearGradient>
+  </defs>
+  <!-- Shield shape -->
+  <path d="M50 5 L85 18 L85 52 Q85 75 50 95 Q15 75 15 52 L15 18 Z" fill="url(#brave-g)"/>
+  <!-- White lion face (simplified) -->
+  <path d="M50 28 C42 28 36 34 36 42 L36 54 C36 60 40 65 45 67 L50 70 L55 67 C60 65 64 60 64 54 L64 42 C64 34 58 28 50 28Z" fill="white" opacity="0.95"/>
+  <!-- Eyes -->
+  <ellipse cx="44" cy="43" rx="4" ry="5" fill="#FB542B"/>
+  <ellipse cx="56" cy="43" rx="4" ry="5" fill="#FB542B"/>
+  <!-- Nose -->
+  <path d="M48 50 L50 53 L52 50 Z" fill="#FB542B"/>
+  <!-- Mouth -->
+  <path d="M44 56 Q50 61 56 56" stroke="#FB542B" stroke-width="2" fill="none" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <circle cx="50" cy="50" r="48" fill="#fff"/>
+  <!-- Blue outer ring -->
+  <path d="M50 2a48 48 0 0 1 41.57 24H50a24 24 0 0 0-20.78 12z" fill="#EA4335"/>
+  <path d="M8.43 26A48 48 0 0 0 50 98a48 48 0 0 0 .01 0l21.14-36.61A24 24 0 0 1 50 74z" fill="#34A853"/>
+  <path d="M91.57 26H29.22A24 24 0 0 0 26 50a24 24 0 0 0 2.87 11.39L8.43 26A48 48 0 0 1 50 2z" fill="#4285F4"/>
+  <!-- White inner circle -->
+  <circle cx="50" cy="50" r="18" fill="#fff"/>
+  <!-- Blue inner circle -->
+  <circle cx="50" cy="50" r="13" fill="#1A73E8"/>
+</svg>
