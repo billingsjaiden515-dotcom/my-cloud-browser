@@ -37,6 +37,12 @@ export class SignalingServer {
       ws.on('close', () => {
         if (clientSessionId) {
           console.log(`[Signaling] Client disconnected for session ${clientSessionId}`);
+          // Release held input state and stop streaming work for this session.
+          // This clears stuck mouse buttons/keyboard modifiers and frees
+          // encoder/browser resources.
+          this.sessionManager.stopSession(clientSessionId).catch((e) => {
+            console.error(`[Signaling] Failed to clean up session ${clientSessionId}:`, e);
+          });
         }
       });
 

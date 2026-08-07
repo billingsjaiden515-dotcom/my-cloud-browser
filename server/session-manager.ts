@@ -62,6 +62,8 @@ export class SessionManager {
   async stopSession(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) return;
+    // Clear any held mouse buttons / keyboard modifiers before teardown
+    await session.browser.releaseInputState().catch(() => {});
     if (session.streamer) await session.streamer.stop();
     await session.browser.stop();
     this.sessions.delete(sessionId);
