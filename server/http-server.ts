@@ -1,9 +1,19 @@
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { existsSync } from 'fs';
 import { SessionManager } from './session-manager.js';
 import { SignalingServer } from './signaling-server.js';
 import { getBrowserInfo } from './browser-finder.js';
 import http from 'http';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// In dev (tsx), __dirname is <root>/server/ → ../dist = <root>/dist ✓
+// In compiled output, __dirname is <root>/dist-server/server/ → ../../dist = <root>/dist ✓
+const DIST_DIR = path.basename(path.dirname(__dirname)) === 'dist-server'
+  ? path.resolve(__dirname, '../../dist')
+  : path.resolve(__dirname, '../dist');
 
 export function createServer(): http.Server {
   const app = express();
@@ -11,6 +21,19 @@ export function createServer(): http.Server {
   app.use(express.json());
 
   const sessionManager = new SessionManager();
+
+  // Serve the built frontend (Vite output) if present.
+  // This lets a single Render web service serve both the UI and the API.
+  if (existsSync(DIST_DIR)) {
+    app.use(express.static(DIST_DIR));
+    // SPA fallback: any non-API GET returns index.html
+    app.get(/^\/(?!api\/|signal).*/, (_req, res) => {
+      res.sendFile(path.join(DIST_DIR, 'index.html'));
+    });
+    console.log(`[HTTP] Serving frontend from ${DIST_DIR}`);
+  } else {
+    console.log('[HTTP] dist/ not found - API only (run `npm run build` to serve the UI)');
+  }
 
   // ─── Session ──────────────────────────────────────────────────────────────────
 

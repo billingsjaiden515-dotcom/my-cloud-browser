@@ -58,6 +58,13 @@ let chromiumPathCache: string | null = null;
 export function getChromiumPath(): string {
   if (chromiumPathCache) return chromiumPathCache;
 
+  // Allow explicit override via env (e.g. Render/Docker installs Chromium elsewhere)
+  const envPath = process.env.CHROMIUM_PATH;
+  if (envPath && existsSync(envPath)) {
+    chromiumPathCache = envPath;
+    return envPath;
+  }
+
   // Try 'which' first
   const which = findExecutable('chromium') || findExecutable('chromium-browser') || findExecutable('google-chrome');
   if (which && existsSync(which)) {

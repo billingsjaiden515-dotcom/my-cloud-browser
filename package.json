@@ -8,6 +8,7 @@
     "server": "tsx watch server/main.ts",
     "vite": "vite --port 5000 --host 0.0.0.0",
     "build": "vite build",
+    "build:server": "tsc -p tsconfig.server.json",
     "lint": "eslint .",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",

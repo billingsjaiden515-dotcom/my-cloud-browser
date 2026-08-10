@@ -1,0 +1,14 @@
+# Render Blueprint — Cloud Browser Web Service (Free Tier)
+# Uses a Dockerfile to reliably provide Chromium + FFmpeg.
+services:
+  - type: web
+    name: cloud-browser
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/session/status
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CHROMIUM_PATH
+        value: /usr/bin/chromium

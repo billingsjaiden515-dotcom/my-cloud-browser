@@ -146,8 +146,9 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
       }
     };
 
-    // Add recvonly transceiver for video
+    // Add recvonly transceivers for video and audio
     pc.addTransceiver('video', { direction: 'recvonly' });
+    pc.addTransceiver('audio', { direction: 'recvonly' });
 
     pcRef.current = pc;
     return pc;

@@ -1,14 +1,12 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
 import {
-  Play, Square, ChevronLeft, ChevronRight, RotateCw,
-  Plus, X, Maximize2, Minimize2, Settings, Sun, Moon,
-  Monitor, EyeOff, Eye, AlertCircle, Globe, Loader2,
+  Play, Square, X, Maximize2, Minimize2, Settings, Sun, Moon,
+  Monitor, Eye, EyeOff, AlertCircle, Globe, Loader2,
 } from 'lucide-react';
 import { useRemoteBrowser } from '@/hooks/useRemoteBrowser';
 import { BrowserViewport } from '@/components/BrowserViewport';
 import { StatusIndicator } from '@/components/StatusIndicator';
 import { useTheme, type Theme } from '@/contexts/ThemeContext';
-import type { TabInfo } from '@/shared/types';
 
 const THEMES: { value: Theme; label: string; icon: string }[] = [
   { value: 'system', label: 'System', icon: '💻' },
@@ -31,7 +29,7 @@ export default function App() {
   const [showError, setShowError] = useState(true);
   const [selectedBrowser, setSelectedBrowser] = useState('chromium');
 
-  const { connectionState, error, currentUrl, currentTitle, tabs, activeTabId, availableBrowsers } = api;
+  const { connectionState, error, currentUrl, currentTitle, availableBrowsers } = api;
   const isConnected = connectionState === 'connected';
   const isConnecting = connectionState === 'connecting';
   const isBusy = isConnecting;
@@ -95,19 +93,6 @@ export default function App() {
     api.navigate(urlInput.trim());
   }, [api, urlInput, isConnected]);
 
-  const handleNewTab = useCallback(async () => {
-    await api.newTab('https://www.google.com');
-  }, [api]);
-
-  const handleCloseTab = useCallback(async (e: React.MouseEvent, tabId: string) => {
-    e.stopPropagation();
-    await api.closeTab(tabId);
-  }, [api]);
-
-  const handleSwitchTab = useCallback(async (tabId: string) => {
-    await api.switchTab(tabId);
-  }, [api]);
-
   // Browser logo component
   const BrowserLogo = ({ name, size = 16 }: { name: string; size?: number }) => (
     <img
@@ -147,28 +132,6 @@ export default function App() {
               <span className="text-sm font-semibold hidden sm:block" style={{ color: 'var(--text)' }}>
                 Cloud Browser
               </span>
-            </div>
-
-            {/* Nav buttons */}
-            <div className="flex items-center gap-0.5 shrink-0">
-              <ToolbarBtn
-                icon={<ChevronLeft className="w-4 h-4" />}
-                onClick={() => api.goBack()}
-                disabled={!isConnected}
-                title="Back"
-              />
-              <ToolbarBtn
-                icon={<ChevronRight className="w-4 h-4" />}
-                onClick={() => api.goForward()}
-                disabled={!isConnected}
-                title="Forward"
-              />
-              <ToolbarBtn
-                icon={isConnecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCw className="w-4 h-4" />}
-                onClick={() => api.reload()}
-                disabled={!isConnected}
-                title="Reload"
-              />
             </div>
 
             {/* Address bar */}
@@ -268,34 +231,6 @@ export default function App() {
               />
             </div>
           </div>
-
-          {/* Tab bar */}
-          {isConnected && tabs.length > 0 && (
-            <div
-              className="flex items-center overflow-x-auto px-2 border-t"
-              style={{ borderColor: 'var(--border)', height: '36px' }}
-            >
-              {tabs.map((tab: TabInfo) => (
-                <TabItem
-                  key={tab.id}
-                  tab={tab}
-                  isActive={tab.id === activeTabId}
-                  onSwitch={() => handleSwitchTab(tab.id)}
-                  onClose={e => handleCloseTab(e, tab.id)}
-                />
-              ))}
-              <button
-                onClick={handleNewTab}
-                className="flex items-center justify-center w-7 h-7 rounded-md shrink-0 ml-1 transition-colors"
-                style={{ color: 'var(--muted)' }}
-                onMouseEnter={e => (e.currentTarget.style.background = 'var(--surface-2)')}
-                onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                title="New tab"
-              >
-                <Plus className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          )}
         </div>
       )}
 
@@ -440,38 +375,6 @@ function ToolbarBtn({
       onMouseLeave={e => { e.currentTarget.style.background = active ? 'rgba(99,102,241,0.1)' : 'transparent'; }}
     >
       {icon}
-    </button>
-  );
-}
-
-function TabItem({
-  tab, isActive, onSwitch, onClose,
-}: {
-  tab: TabInfo;
-  isActive: boolean;
-  onSwitch: () => void;
-  onClose: (e: React.MouseEvent) => void;
-}) {
-  const title = tab.title || tab.url || 'New Tab';
-
-  return (
-    <button
-      onClick={onSwitch}
-      className="flex items-center gap-1.5 px-2.5 h-7 min-w-[80px] max-w-[200px] rounded-md text-xs shrink-0 group transition-colors mr-0.5"
-      style={{
-        background: isActive ? 'var(--surface-2)' : 'transparent',
-        color: isActive ? 'var(--text)' : 'var(--muted)',
-        border: isActive ? '1px solid var(--border)' : '1px solid transparent',
-      }}
-    >
-      <span className="truncate flex-1 text-left">{title}</span>
-      <span
-        onClick={onClose}
-        className="opacity-0 group-hover:opacity-100 rounded p-0.5 hover:bg-white/10 transition-all"
-        role="button"
-      >
-        <X className="w-2.5 h-2.5" />
-      </span>
     </button>
   );
 }

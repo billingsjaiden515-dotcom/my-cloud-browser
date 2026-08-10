@@ -191,7 +191,6 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
         ref={videoRef}
         autoPlay
         playsInline
-        muted
         className="w-full h-full object-contain cursor-default select-none"
         style={{ display: isConnected ? 'block' : 'none' }}
         onMouseDown={handleMouseDown}

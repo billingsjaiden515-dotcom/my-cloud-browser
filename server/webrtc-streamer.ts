@@ -1,6 +1,7 @@
 import { RTCPeerConnection, RTCSessionDescription } from 'werift';
 import type { BrowserSession } from './browser-session.js';
 import { Vp8Encoder, type Vp8Frame } from './vp8-encoder.js';
+import { AudioCapture } from './audio-capture.js';
 
 const CLOCK_RATE = 90000; // Standard 90 kHz video RTP clock
 const VP8_PAYLOAD_TYPE = 96; // Dynamic PT for VP8
@@ -72,6 +73,10 @@ export class WebRTCStreamer {
   // werift RTCRtpSender
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private sender: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private audioSender: any = null;
+
+  private audioCapture: AudioCapture | null = null;
 
   // Metrics
   private frameCount = 0;
@@ -118,6 +123,10 @@ export class WebRTCStreamer {
     // Add send-only video transceiver
     const transceiver = this.pc.addTransceiver('video', { direction: 'sendonly' });
     this.sender = transceiver.sender;
+
+    // Add send-only audio transceiver for the Opus audio track
+    const audioTransceiver = this.pc.addTransceiver('audio', { direction: 'sendonly' });
+    this.audioSender = audioTransceiver.sender;
 
     const offer = new RTCSessionDescription(offerSdp, 'offer');
     await this.pc.setRemoteDescription(offer);
@@ -178,6 +187,20 @@ export class WebRTCStreamer {
       this.sendVp8Frame(vp8Frame.data);
     });
 
+    // Start audio capture and forward RTP packets through the audio transceiver.
+    // Audio is best-effort: if PulseAudio is unavailable, video continues.
+    this.audioCapture = new AudioCapture();
+    this.audioCapture.on('packet', (pkt: Buffer) => {
+      if (!this.streaming || !this.audioSender) return;
+      try {
+        this.audioSender.sendRtp(pkt);
+      } catch { /* peer not ready; swallow */ }
+    });
+    this.audioCapture.on('error', (err: Error) => {
+      console.error('[WebRTC] Audio capture error (non-fatal, continuing video):', err.message);
+    });
+    this.audioCapture.start();
+
     // Log encoder stats periodically
     this.statsTimer = setInterval(() => {
       if (!this.streaming) {
@@ -231,6 +254,11 @@ export class WebRTCStreamer {
     this.currentHeight = 0;
     this.encoderRestarting = false;
     this.encoder.stop();
+    if (this.audioCapture) {
+      this.audioCapture.stop();
+      this.audioCapture = null;
+    }
+    this.audioSender = null;
     if (this.pc) {
       try { this.pc.close(); } catch { /* ignore */ }
       this.pc = null;

@@ -1,6 +1,7 @@
 import { createServer } from './http-server.js';
 
-const PORT = parseInt(process.env.SERVER_PORT || '3001', 10);
+// Render provides PORT; fall back to 3001 for local dev.
+const PORT = parseInt(process.env.PORT || process.env.SERVER_PORT || '3001', 10);
 
 const server = createServer();
 
