@@ -53,7 +53,6 @@ export class BrowserSession {
         '--disable-sync',
         '--disable-translate',
         '--metrics-recording-only',
-        '--mute-audio',
         '--disable-infobars',
         '--disable-notifications',
         '--disable-popup-blocking',

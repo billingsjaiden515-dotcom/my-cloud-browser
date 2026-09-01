@@ -67,11 +67,12 @@ export class AudioCapture extends EventEmitter {
       `rtp://127.0.0.1:${this.port}`,
     ], { stdio: ['ignore', 'ignore', 'pipe'] });
 
+    // Log ALL stderr so we can see the real failure reason (e.g. "pulseaudio: ...",
+    // "Unknown encoder 'libopus'", "Connection refused"). Filtering only lines
+    // containing "error" hid critical diagnostics on Render.
     this.ffmpeg.stderr!.on('data', (d: Buffer) => {
-      const msg = d.toString();
-      if (msg.includes('Error') || msg.includes('error')) {
-        console.error('[AudioCapture] FFmpeg stderr:', msg.trim());
-      }
+      const msg = d.toString().trim();
+      if (msg) console.error('[AudioCapture] FFmpeg stderr:', msg);
     });
 
     this.ffmpeg.on('error', (err) => {
@@ -79,11 +80,11 @@ export class AudioCapture extends EventEmitter {
       this.emit('error', new Error(`Audio FFmpeg failed: ${err.message}`));
     });
 
-    this.ffmpeg.on('close', (code) => {
+    this.ffmpeg.on('close', (code, signal) => {
       if (this.running) {
-        console.log(`[AudioCapture] FFmpeg exited with code ${code}`);
+        console.log(`[AudioCapture] FFmpeg exited code=${code} signal=${signal}`);
         this.running = false;
-        this.emit('error', new Error(`Audio FFmpeg exited with code ${code}`));
+        this.emit('error', new Error(`Audio FFmpeg exited code=${code} signal=${signal}`));
       }
     });
 

@@ -1,7 +1,7 @@
 # Cloud Browser — Render-compatible image
 # Provides Node, Chromium, and FFmpeg in one container.
 
-FROM node:20-bookworm-slim
+FROM node:22-bookworm-slim
 
 # Chromium runtime shared libraries + FFmpeg (with libvpx for VP8)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -35,7 +35,8 @@ RUN npm ci --omit=dev || npm install --omit=dev
 
 # Build the frontend and compile the server (needs dev deps for Vite/tsc)
 COPY . .
-RUN npm install && npm run build && npm run build:server && npm prune --omit=dev
+RUN npm install && npm run build && npm run build:server && npm prune --omit=dev \
+    && chmod +x docker-start.sh
 
 # Chromium is installed at /usr/bin/chromium in this image
 ENV CHROMIUM_PATH=/usr/bin/chromium
@@ -44,4 +45,5 @@ ENV NODE_ENV=production
 EXPOSE 3001
 
 # Render injects PORT; fall back to 3001
-CMD ["node", "dist-server/server/main.js"]
+# docker-start.sh starts PulseAudio (for audio capture) then launches the server
+CMD ["sh", "docker-start.sh"]
