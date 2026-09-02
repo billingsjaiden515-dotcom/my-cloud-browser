@@ -1,0 +1,26 @@
+{
+  "name": "Cloud Browser Dev (Linux)",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
+  "forwardPorts": [
+    5000,
+    3001
+  ],
+  "portsAttributes": {
+    "5000": {
+      "label": "Cloud Browser UI",
+      "onAutoForward": "notify"
+    },
+    "3001": {
+      "label": "Backend API + WebRTC signaling",
+      "onAutoForward": "notify"
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode-remote.vscode-remote-extensionpack"
+      ]
+    }
+  }
+}

@@ -7,6 +7,31 @@ const CLOCK_RATE = 90000; // Standard 90 kHz video RTP clock
 const VP8_PAYLOAD_TYPE = 96; // Dynamic PT for VP8
 
 /**
+ * ICE servers used by the werift RTCPeerConnection.
+ *
+ * Default: [] (host candidates only). On a VPS with a public IP or 1:1 NAT,
+ * host candidates are sufficient.
+ *
+ * For NAT'd / port-forwarded environments where UDP inbound is unavailable
+ * (e.g. GitHub Codespaces, which only forwards TCP), set WEBRTC_ICE_SERVERS to a
+ * JSON array with a TURN server reachable over TCP, e.g.:
+ *   WEBRTC_ICE_SERVERS='[{"urls":"turn:openrelay.metered.ca:443","username":"openrelayproject","credential":"openrelayproject"}]'
+ */
+export function getConfiguredIceServers(): { urls: string; username?: string; credential?: string }[] {
+  const raw = process.env.WEBRTC_ICE_SERVERS;
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed as { urls: string; username?: string; credential?: string }[];
+      console.error('[WebRTC] WEBRTC_ICE_SERVERS is not an array, ignoring');
+    } catch (e) {
+      console.error('[WebRTC] Invalid WEBRTC_ICE_SERVERS JSON:', e);
+    }
+  }
+  return [];
+}
+
+/**
  * Packetize a VP8 frame into RTP packet buffers (RFC 7741).
  * Each returned buffer is a complete RTP packet (header + VP8 payload descriptor + data).
  */
@@ -102,7 +127,7 @@ export class WebRTCStreamer {
 
   async processOffer(offerSdp: string): Promise<string> {
     this.pc = new RTCPeerConnection({
-      iceServers: [],
+      iceServers: getConfiguredIceServers(),
     });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

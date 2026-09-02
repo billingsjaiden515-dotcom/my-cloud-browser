@@ -6,6 +6,7 @@ import { existsSync } from 'fs';
 import { SessionManager } from './session-manager.js';
 import { SignalingServer } from './signaling-server.js';
 import { getBrowserInfo } from './browser-finder.js';
+import { getConfiguredIceServers } from './webrtc-streamer.js';
 import http from 'http';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -87,6 +88,12 @@ export function createServer(): http.Server {
   app.get('/api/browsers', (_req, res) => {
     const browsers = getBrowserInfo();
     res.json({ browsers });
+  });
+
+  // ─── Config (frontend runtime settings) ───────────────────────────────────────
+
+  app.get('/api/config', (_req, res) => {
+    res.json({ iceServers: getConfiguredIceServers() });
   });
 
   // ─── Navigation ───────────────────────────────────────────────────────────────

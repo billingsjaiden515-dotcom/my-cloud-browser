@@ -4,6 +4,9 @@ import type { SignalMessage, OfferPayload, TabInfo, BrowserInfo } from '@/shared
 // Use relative URLs so Vite proxy handles both dev and production
 const API_BASE = '';
 
+// Fallback STUN if the server exposes no ICE configuration (always reachable).
+const DEFAULT_ICE_SERVERS: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
+
 function getWsUrl(): string {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${protocol}//${location.host}/signal`;
@@ -108,10 +111,8 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
     }
   }, []);
 
-  const setupWebRTC = useCallback((sid: string) => {
-    const pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-    });
+  const setupWebRTC = useCallback((sid: string, iceServers: RTCIceServer[]) => {
+    const pc = new RTCPeerConnection({ iceServers });
 
     pc.onconnectionstatechange = () => {
       const state = pc.connectionState;
@@ -173,12 +174,25 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
       sessionIdRef.current = sid;
       setSessionId(sid);
 
+      // Fetch runtime config (ICE servers) from the backend so the client matches
+      // the server's NAT/TURN configuration. Falls back to public STUN.
+      let iceServers = DEFAULT_ICE_SERVERS;
+      try {
+        const cfgRes = await fetch(`${API_BASE}/api/config`);
+        if (cfgRes.ok) {
+          const cfg = await cfgRes.json();
+          if (Array.isArray(cfg.iceServers) && cfg.iceServers.length > 0) {
+            iceServers = cfg.iceServers;
+          }
+        }
+      } catch { /* keep default STUN */ }
+
       const ws = new WebSocket(getWsUrl());
       wsRef.current = ws;
 
       ws.onopen = async () => {
         console.log('[Client] WebSocket connected, creating WebRTC offer');
-        const pc = setupWebRTC(sid);
+        const pc = setupWebRTC(sid, iceServers);
 
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
