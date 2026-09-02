@@ -27,6 +27,10 @@ export class BrowserSession {
   private browserType: string;
   private viewportWidth = VIEWPORT_WIDTH;
   private viewportHeight = VIEWPORT_HEIGHT;
+  private captureInterval: ReturnType<typeof setInterval> | null = null;
+  private capturePending = false;
+  private frameCounter = 0;
+  private readonly TARGET_FPS = 30;
 
   constructor(sessionId: string, browserType = 'chromium') {
     this.sessionId = sessionId;
@@ -105,53 +109,72 @@ export class BrowserSession {
     this.frameCallback = callback;
   }
 
+  /**
+   * Continuously capture JPEG screenshots at ~30 FPS using Page.captureScreenshot.
+   * This replaces CDP screencast, which only delivers frames when the compositor
+   * reports damage — meaning static pages freeze after the first frame.
+   */
   async startScreencast(): Promise<void> {
     const page = this.getActivePage();
     if (!page) throw new Error('No active page');
     if (this.screencastActive) await this.stopScreencast();
 
-    this.cdpSession = await page.createCDPSession();
-
-    this.cdpSession.on('Page.screencastFrame', (payload: {
-      data: string;
-      sessionId: number;
-      metadata: { deviceWidth: number; deviceHeight: number };
-    }) => {
-      if (this.frameCallback) {
-        const buf = Buffer.from(payload.data, 'base64');
-        this.frameCallback(
-          buf,
-          payload.metadata?.deviceWidth || this.viewportWidth,
-          payload.metadata?.deviceHeight || this.viewportHeight,
-        );
-      }
-      this.cdpSession?.send('Page.screencastFrameAck', {
-        sessionId: payload.sessionId,
-      }).catch(() => {});
-    });
-
-    await this.cdpSession.send('Page.startScreencast', {
-      format: 'jpeg',
-      quality: 80,
-      everyNthFrame: 1,
-      maxWidth: this.viewportWidth,
-      maxHeight: this.viewportHeight,
-    });
-
     this.screencastActive = true;
-    console.log('[BrowserSession] Screencast started');
+    const intervalMs = 1000 / this.TARGET_FPS;
+
+    // Kick off the first capture immediately, then schedule the rest.
+    this.scheduleNextCapture();
+
+    this.captureInterval = setInterval(() => {
+      this.scheduleNextCapture();
+    }, intervalMs);
+
+    console.log(`[BrowserSession] Continuous capture started at ${this.TARGET_FPS} FPS`);
+  }
+
+  /**
+   * Capture one screenshot and feed it through the frame callback.
+   * Skips if a previous capture is still pending (prevents overlap).
+   */
+  private scheduleNextCapture(): void {
+    if (!this.screencastActive || this.capturePending) return;
+
+    const page = this.getActivePage();
+    if (!page) return;
+
+    this.capturePending = true;
+
+    page.screenshot({ type: 'jpeg', quality: 80 })
+      .then((raw: Uint8Array) => {
+        const jpegData = Buffer.from(raw);
+        this.frameCounter++;
+        if (this.frameCallback) {
+          this.frameCallback(jpegData, this.viewportWidth, this.viewportHeight);
+        }
+        // Log every ~30 frames so we can verify continuous production.
+        if (this.frameCounter % 30 === 0) {
+          console.log(`[BrowserSession] Captured ${this.frameCounter} frames (session ${this.sessionId})`);
+        }
+      })
+      .catch((err: Error) => {
+        console.error(`[BrowserSession] Screenshot failed: ${err.message}`);
+      })
+      .finally(() => {
+        this.capturePending = false;
+      });
   }
 
   async stopScreencast(): Promise<void> {
-    if (!this.screencastActive || !this.cdpSession) return;
-    try {
-      await this.cdpSession.send('Page.stopScreencast');
-    } catch { /* ignore */ }
-    try {
-      await this.cdpSession.detach();
-    } catch { /* ignore */ }
-    this.cdpSession = null;
     this.screencastActive = false;
+    if (this.captureInterval) {
+      clearInterval(this.captureInterval);
+      this.captureInterval = null;
+    }
+    // Don't wait for pending capture to finish — it'll clear itself via the flag.
+    if (this.frameCounter > 0) {
+      console.log(`[BrowserSession] Capture stopped after ${this.frameCounter} frames`);
+    }
+    this.frameCounter = 0;
   }
 
   getViewport(): { width: number; height: number } {
