@@ -99,7 +99,9 @@ export class Vp8Encoder extends EventEmitter {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    this.ffmpeg.stdout!.on('data', (chunk: Buffer) => {
+    const proc = this.ffmpeg;
+
+    proc.stdout!.on('data', (chunk: Buffer) => {
       this.recvBuf = Buffer.concat([this.recvBuf, chunk]);
       this.parseIvf();
     });
@@ -107,25 +109,28 @@ export class Vp8Encoder extends EventEmitter {
     // Log ALL stderr so we can see the real failure reason (e.g. "Unknown encoder",
     // "pulseaudio: ...", "Cannot open ..."). Filtering only lines containing
     // "error" hid critical diagnostics on Render.
-    this.ffmpeg.stderr!.on('data', (d: Buffer) => {
+    proc.stderr!.on('data', (d: Buffer) => {
       const msg = d.toString().trim();
       if (msg) console.error('[VP8Encoder] FFmpeg stderr:', msg);
     });
 
-    this.ffmpeg.on('error', (err) => {
+    proc.on('error', (err) => {
+      if (this.ffmpeg !== proc) return; // stale process, ignore
       this.ffmpegFailed = true;
       console.error('[VP8Encoder] FFmpeg process error:', err.message);
       this.emit('error', new Error(`FFmpeg process failed: ${err.message}`));
     });
 
-    this.ffmpeg.on('close', (code, signal) => {
-      if (this.running) {
-        // code is null when the process was killed by a signal (e.g. OOM-killer)
-        console.log(`[VP8Encoder] FFmpeg exited code=${code} signal=${signal}`);
-        this.running = false;
-        this.ffmpeg = null;
-        this.emit('error', new Error(`FFmpeg exited unexpectedly code=${code} signal=${signal}`));
-      }
+    proc.on('close', (code, signal) => {
+      // Only treat this as fatal if this process is still the current encoder.
+      // A stale process can be killed by an intentional stop()/restart and its
+      // async 'close' must not tear down a freshly started encoder.
+      if (this.ffmpeg !== proc || !this.running) return;
+      // code is null when the process was killed by a signal (e.g. OOM-killer)
+      console.log(`[VP8Encoder] FFmpeg exited code=${code} signal=${signal}`);
+      this.running = false;
+      this.ffmpeg = null;
+      this.emit('error', new Error(`FFmpeg exited unexpectedly code=${code} signal=${signal}`));
     });
 
     console.log(`[VP8Encoder] Started FFmpeg encoder ${width}x${height} @ ${bitrate}`);

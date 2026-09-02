@@ -182,6 +182,10 @@ export class WebRTCStreamer {
 
     const { width, height } = this.session.getViewport();
     this.encoder.start(width, height);
+    // Seed the "current" dimensions to the viewport so the first screencast
+    // frame (which should match) does NOT trigger a spurious encoder restart.
+    this.currentWidth = width;
+    this.currentHeight = height;
     this.streaming = true;
 
     // Feed JPEG frames from browser into the VP8 encoder.
