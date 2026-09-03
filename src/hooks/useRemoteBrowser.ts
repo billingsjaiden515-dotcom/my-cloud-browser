@@ -218,6 +218,10 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
         });
       };
 
+      // Buffer for remote ICE candidates that arrive before remote description
+      // is set (trickle ICE race condition: server may send candidates before answer)
+      const remoteCandidatesBuffer: RTCIceCandidateInit[] = [];
+
       ws.onmessage = async (event: MessageEvent) => {
         const msg: SignalMessage = JSON.parse(event.data);
         console.log(`[Client] Signal received: ${msg.type}`);
@@ -230,17 +234,39 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
               new RTCSessionDescription({ type: 'answer', sdp: payload.sdp }),
             );
             console.log('[Client] Remote description set');
+
+            // Now that remote description is set, add all buffered candidates
+            if (remoteCandidatesBuffer.length > 0) {
+              console.log(`[Client] Adding ${remoteCandidatesBuffer.length} buffered remote ICE candidates`);
+              for (const candidate of remoteCandidatesBuffer) {
+                try {
+                  await pc.addIceCandidate(candidate);
+                  console.log(`[Client] Buffered ICE candidate added: ${candidate.candidate?.slice(0, 60)}`);
+                } catch (e) {
+                  console.warn('[Client] Buffered ICE candidate add failed:', e);
+                }
+              }
+              remoteCandidatesBuffer.length = 0;
+            }
           }
         } else if (msg.type === 'ice') {
           const payload = msg.payload as { candidate: RTCIceCandidateInit };
           const pc = pcRef.current;
           if (pc && payload.candidate) {
-            try {
-              const c = payload.candidate;
-              console.log(`[Client] Remote ICE candidate: ${c.candidate?.slice(0, 60)}`);
-              await pc.addIceCandidate(payload.candidate);
-            } catch (e) {
-              console.warn('[Client] ICE candidate add failed:', e);
+            const c = payload.candidate;
+            console.log(`[Client] Remote ICE candidate: ${c.candidate?.slice(0, 60)}`);
+
+            // If remote description not yet set, buffer the candidate
+            // (trickle ICE: candidates can arrive before the answer)
+            if (!pc.remoteDescription || !pc.remoteDescription.type) {
+              console.log('[Client] Buffering remote ICE candidate (waiting for remote description)');
+              remoteCandidatesBuffer.push(payload.candidate);
+            } else {
+              try {
+                await pc.addIceCandidate(payload.candidate);
+              } catch (e) {
+                console.warn('[Client] ICE candidate add failed:', e);
+              }
             }
           }
         } else if (msg.type === 'error') {
