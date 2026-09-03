@@ -3,6 +3,12 @@ import type { BrowserSession } from './browser-session.js';
 import { Vp8Encoder, type Vp8Frame } from './vp8-encoder.js';
 import { AudioCapture } from './audio-capture.js';
 
+// Enable werift ICE debug logging to diagnose TURN allocation failures
+// This must be set before werift is imported
+if (!process.env.DEBUG) {
+  process.env.DEBUG = 'werift-ice*';
+}
+
 const CLOCK_RATE = 90000; // Standard 90 kHz video RTP clock
 const VP8_PAYLOAD_TYPE = 96; // Dynamic PT for VP8
 
@@ -26,18 +32,10 @@ export function getConfiguredIceServers(): { urls: string; username?: string; cr
     try {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        // Ensure TURN servers use TCP transport by default (UDP is blocked in Codespaces)
-        const servers = parsed as { urls: string; username?: string; credential?: string }[];
-        return servers.map(server => {
-          if (server.urls && (server.urls.startsWith('turn:') || server.urls.startsWith('turns:'))) {
-            // Add transport=tcp if not already specified
-            if (!server.urls.includes('transport=')) {
-              const separator = server.urls.includes('?') ? '&' : '?';
-              server.urls = `${server.urls}${separator}transport=tcp`;
-            }
-          }
-          return server;
-        });
+        // Return servers as-is. TCP transport is handled by the turnTransport
+        // config option in the RTCPeerConnection, not by URL query parameters.
+        // werift does not parse ?transport=tcp from TURN URLs.
+        return parsed as { urls: string; username?: string; credential?: string }[];
       }
       console.error('[WebRTC] WEBRTC_ICE_SERVERS is not an array, ignoring');
     } catch (e) {
@@ -156,7 +154,7 @@ export class WebRTCStreamer {
     this.pc = new RTCPeerConnection({
       iceServers,
       // Force TCP for TURN allocation (Codespaces blocks UDP)
-      forceTurnTCP: true,
+      turnTransport: 'tcp',
     } as import('werift').RTCConfiguration);
 
     // Track candidate count and relay status for diagnostics
