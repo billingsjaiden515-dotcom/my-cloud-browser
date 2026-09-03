@@ -1,6 +1,6 @@
 /**
  * Definitive TURN server test for Codespaces.
- * Run with: node test-turn.mjs
+ * Run with: DEBUG=werift-ice,werift:* node test-turn.mjs
  *
  * This script tests:
  * 1. TCP connectivity to TURN server
@@ -14,6 +14,11 @@ import net from 'net';
 const TURN_URL = 'turn:openrelay.metered.ca:443';
 const TURN_USERNAME = 'openrelayproject';
 const TURN_CREDENTIAL = 'openrelayproject';
+
+// Enable werift debug logging if not already set
+if (!process.env.DEBUG) {
+  process.env.DEBUG = 'werift-ice,werift:*';
+}
 
 async function testTcpConnectivity() {
   console.log('\n=== Test 1: TCP Connectivity ===');
