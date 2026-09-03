@@ -56,7 +56,7 @@ async function testTurnAllocation() {
     gatheringComplete: false,
   };
 
-  return new Promise((resolve) => {
+  return new Promise(async (resolve) => {
     // Collect all ICE candidates
     pc.onicecandidate = (event) => {
       if (event.candidate) {
