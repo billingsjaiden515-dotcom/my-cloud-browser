@@ -114,6 +114,8 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
   const setupWebRTC = useCallback((sid: string, iceServers: RTCIceServer[]) => {
     const pc = new RTCPeerConnection({ iceServers });
 
+    console.log('[Client] RTCPeerConnection created with ICE servers:', JSON.stringify(iceServers));
+
     pc.onconnectionstatechange = () => {
       const state = pc.connectionState;
       console.log('[Client] WebRTC connection state:', state);
@@ -125,6 +127,14 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
       } else if (state === 'disconnected' || state === 'closed') {
         setConnectionState('disconnected');
       }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      console.log('[Client] ICE connection state:', pc.iceConnectionState);
+    };
+
+    pc.onicegatheringstatechange = () => {
+      console.log('[Client] ICE gathering state:', pc.iceGatheringState);
     };
 
     pc.ontrack = (event: RTCTrackEvent) => {
@@ -139,11 +149,15 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
 
     pc.onicecandidate = (event: RTCPeerConnectionIceEvent) => {
       if (event.candidate) {
+        const c = event.candidate;
+        console.log(`[Client] Local ICE candidate: ${c.type} ${c.protocol}:${c.address}:${c.port}`);
         sendSignal({
           type: 'ice',
           sessionId: sid,
           payload: { candidate: event.candidate.toJSON() },
         });
+      } else {
+        console.log('[Client] ICE gathering complete');
       }
     };
 
@@ -222,6 +236,8 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
           const pc = pcRef.current;
           if (pc && payload.candidate) {
             try {
+              const c = payload.candidate;
+              console.log(`[Client] Remote ICE candidate: ${c.candidate?.slice(0, 60)}`);
               await pc.addIceCandidate(payload.candidate);
             } catch (e) {
               console.warn('[Client] ICE candidate add failed:', e);

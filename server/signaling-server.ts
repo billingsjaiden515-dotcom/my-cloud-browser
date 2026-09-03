@@ -34,15 +34,18 @@ export class SignalingServer {
         }
       });
 
-      ws.on('close', () => {
+      ws.on('close', (code: number, reason: Buffer) => {
         if (clientSessionId) {
-          console.log(`[Signaling] Client disconnected for session ${clientSessionId}`);
-          // Release held input state and stop streaming work for this session.
-          // This clears stuck mouse buttons/keyboard modifiers and frees
-          // encoder/browser resources.
-          this.sessionManager.stopSession(clientSessionId).catch((e) => {
-            console.error(`[Signaling] Failed to clean up session ${clientSessionId}:`, e);
-          });
+          console.log(`[Signaling] WebSocket closed for session ${clientSessionId} (code: ${code}, reason: ${reason.toString() || 'none'})`);
+          // Don't immediately kill the session on WebSocket close.
+          // A transient network drop shouldn't destroy the browser session.
+          // Instead, clean up input state (release stuck mouse buttons / modifiers)
+          // and let the session timeout handle actual cleanup if WebRTC never connects.
+          const session = this.sessionManager.getSession(clientSessionId);
+          if (session?.browser) {
+            session.browser.releaseInputState();
+            console.log(`[Signaling] Released input state for session ${clientSessionId}`);
+          }
         }
       });
 
@@ -75,6 +78,13 @@ export class SignalingServer {
       };
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(iceMsg));
+      }
+    });
+
+    // When WebRTC connects, cancel the session timeout
+    streamer.onConnectionStateChange((state) => {
+      if (state === 'connected') {
+        this.sessionManager.cancelSessionTimeout(sessionId);
       }
     });
 

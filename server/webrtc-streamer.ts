@@ -16,13 +16,29 @@ const VP8_PAYLOAD_TYPE = 96; // Dynamic PT for VP8
  * (e.g. GitHub Codespaces, which only forwards TCP), set WEBRTC_ICE_SERVERS to a
  * JSON array with a TURN server reachable over TCP, e.g.:
  *   WEBRTC_ICE_SERVERS='[{"urls":"turn:openrelay.metered.ca:443","username":"openrelayproject","credential":"openrelayproject"}]'
+ *
+ * TCP transport is auto-appended to TURN URLs when no transport is specified,
+ * because GitHub Codespaces (and similar environments) block UDP.
  */
 export function getConfiguredIceServers(): { urls: string; username?: string; credential?: string }[] {
   const raw = process.env.WEBRTC_ICE_SERVERS;
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed as { urls: string; username?: string; credential?: string }[];
+      if (Array.isArray(parsed)) {
+        // Ensure TURN servers use TCP transport by default (UDP is blocked in Codespaces)
+        const servers = parsed as { urls: string; username?: string; credential?: string }[];
+        return servers.map(server => {
+          if (server.urls && (server.urls.startsWith('turn:') || server.urls.startsWith('turns:'))) {
+            // Add transport=tcp if not already specified
+            if (!server.urls.includes('transport=')) {
+              const separator = server.urls.includes('?') ? '&' : '?';
+              server.urls = `${server.urls}${separator}transport=tcp`;
+            }
+          }
+          return server;
+        });
+      }
       console.error('[WebRTC] WEBRTC_ICE_SERVERS is not an array, ignoring');
     } catch (e) {
       console.error('[WebRTC] Invalid WEBRTC_ICE_SERVERS JSON:', e);
@@ -88,6 +104,7 @@ export class WebRTCStreamer {
   private encoder: Vp8Encoder;
   private streaming = false;
   private iceCandidateCallback: ((candidate: unknown) => void) | null = null;
+  private connectionStateCallback: ((state: string) => void) | null = null;
 
   // RTP state
   private sequenceNumber = Math.floor(Math.random() * 0xffff);
@@ -125,21 +142,58 @@ export class WebRTCStreamer {
     this.iceCandidateCallback = callback;
   }
 
+  onConnectionStateChange(callback: (state: string) => void): void {
+    this.connectionStateCallback = callback;
+  }
+
   async processOffer(offerSdp: string): Promise<string> {
+    const iceServers = getConfiguredIceServers();
+    console.log(`[WebRTC] Creating RTCPeerConnection with ${iceServers.length} ICE server(s)`);
+    if (iceServers.length > 0) {
+      console.log('[WebRTC] ICE servers:', JSON.stringify(iceServers));
+    }
+
     this.pc = new RTCPeerConnection({
-      iceServers: getConfiguredIceServers(),
+      iceServers,
     });
+
+    // Track candidate count for diagnostics
+    let candidateCount = 0;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (this.pc as any).onicecandidate = (event: { candidate: unknown }) => {
-      if (event.candidate && this.iceCandidateCallback) {
-        this.iceCandidateCallback(event.candidate);
+      if (event.candidate) {
+        candidateCount++;
+        const c = event.candidate as { candidate?: string; type?: string };
+        console.log(`[WebRTC] Server ICE candidate #${candidateCount}: ${c.candidate?.slice(0, 80) ?? 'unknown'}`);
+        if (this.iceCandidateCallback) {
+          this.iceCandidateCallback(event.candidate);
+        }
+      } else {
+        console.log(`[WebRTC] Server ICE gathering complete. Total candidates: ${candidateCount}`);
       }
+    };
+
+    // Log ICE gathering state changes
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (this.pc as any).onicegatheringstatechange = () => {
+      const state = (this.pc as any)?.iceGatheringState;
+      console.log(`[WebRTC] ICE gathering state: ${state}`);
+    };
+
+    // Log ICE connection state changes
+    this.pc.oniceconnectionstatechange = () => {
+      const state = this.pc?.iceConnectionState;
+      console.log(`[WebRTC] ICE connection state: ${state}`);
     };
 
     this.pc.onconnectionstatechange = () => {
       const state = this.pc?.connectionState;
       console.log(`[WebRTC] Connection state: ${state}`);
+      // Notify session manager so it can cancel the timeout when connected
+      if (this.connectionStateCallback) {
+        this.connectionStateCallback(state ?? 'unknown');
+      }
       if (state === 'disconnected' || state === 'failed' || state === 'closed') {
         this.streaming = false;
       }
@@ -155,12 +209,14 @@ export class WebRTCStreamer {
 
     const offer = new RTCSessionDescription(offerSdp, 'offer');
     await this.pc.setRemoteDescription(offer);
+    console.log('[WebRTC] Remote description set');
 
     const answer = await this.pc.createAnswer();
     await this.pc.setLocalDescription(answer);
 
     console.log('[WebRTC] Offer processed, answer created');
     console.log('[WebRTC] Answer SDP snippet:', (answer.sdp || '').slice(0, 300));
+    console.log(`[WebRTC] Total server ICE candidates gathered: ${candidateCount}`);
     return answer.sdp || '';
   }
 

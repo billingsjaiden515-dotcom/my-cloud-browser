@@ -12,6 +12,9 @@ interface ActiveSession {
 
 export class SessionManager {
   private sessions = new Map<string, ActiveSession>();
+  private sessionTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
+  // If WebRTC never connects within this period, clean up the session
+  private readonly SESSION_TIMEOUT_MS = 60_000; // 60 seconds
 
   async startSession(browserType = 'chromium'): Promise<string> {
     const id = randomUUID();
@@ -27,8 +30,33 @@ export class SessionManager {
       browserType,
     };
     this.sessions.set(id, session);
+
+    // Set a timeout to clean up the session if WebRTC never connects
+    this.scheduleSessionTimeout(id);
+
     console.log(`[SessionManager] Session ${id} launched (${browserType})`);
     return id;
+  }
+
+  /** Cancel the timeout (call when WebRTC connects) */
+  cancelSessionTimeout(sessionId: string): void {
+    const timer = this.sessionTimeouts.get(sessionId);
+    if (timer) {
+      clearTimeout(timer);
+      this.sessionTimeouts.delete(sessionId);
+      console.log(`[SessionManager] Timeout cancelled for session ${sessionId} (WebRTC connected)`);
+    }
+  }
+
+  private scheduleSessionTimeout(sessionId: string): void {
+    const timer = setTimeout(() => {
+      console.log(`[SessionManager] Session ${sessionId} timed out (no WebRTC connection) - cleaning up`);
+      this.sessionTimeouts.delete(sessionId);
+      this.stopSession(sessionId).catch((e) => {
+        console.error(`[SessionManager] Failed to clean up timed-out session ${sessionId}:`, e);
+      });
+    }, this.SESSION_TIMEOUT_MS);
+    this.sessionTimeouts.set(sessionId, timer);
   }
 
   createStreamer(sessionId: string): WebRTCStreamer {
@@ -55,6 +83,11 @@ export class SessionManager {
     return this.sessions.get(sessionId)?.browser ?? null;
   }
 
+  /** Get the full session record (for signaling cleanup) */
+  getSession(sessionId: string): ActiveSession | null {
+    return this.sessions.get(sessionId) ?? null;
+  }
+
   hasSession(sessionId: string): boolean {
     return this.sessions.has(sessionId);
   }
@@ -62,6 +95,8 @@ export class SessionManager {
   async stopSession(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) return;
+    // Clear the timeout if it exists
+    this.cancelSessionTimeout(sessionId);
     // Clear any held mouse buttons / keyboard modifiers before teardown
     await session.browser.releaseInputState().catch(() => {});
     if (session.streamer) await session.streamer.stop();
