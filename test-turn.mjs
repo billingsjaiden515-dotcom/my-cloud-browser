@@ -1,30 +1,31 @@
 /**
  * Definitive TURN server test for Codespaces.
- * Run with: DEBUG=werift-ice,werift:* node test-turn.mjs
- *
- * This script tests:
- * 1. TCP connectivity to TURN server
- * 2. TURN allocation using werift (same library as the app)
- * 3. Whether relay candidates are generated
+ * Run with: node test-turn.mjs
+ * 
+ * Tests multiple TURN configurations to find what works.
  */
 
-import { RTCPeerConnection } from 'werift';
 import net from 'net';
+import dgram from 'dgram';
 
-const TURN_URL = 'turn:openrelay.metered.ca:443';
+// Force debug output to stderr
+process.env.DEBUG = process.env.DEBUG || 'werift-ice,werift:*,werift-ice:*,werift:ice:*';
+process.env.DEBUG_COLORS = '0';
+process.env.DEBUG_HIDE_DATE = 'true';
+
+const TURN_HOST = 'openrelay.metered.ca';
+const TURN_PORT = 443;
 const TURN_USERNAME = 'openrelayproject';
 const TURN_CREDENTIAL = 'openrelayproject';
 
-// Enable werift debug logging if not already set
-if (!process.env.DEBUG) {
-  process.env.DEBUG = 'werift-ice,werift:*';
-}
+// Import werift AFTER setting DEBUG
+const { RTCPeerConnection } = await import('werift');
 
 async function testTcpConnectivity() {
   console.log('\n=== Test 1: TCP Connectivity ===');
   return new Promise((resolve) => {
-    const socket = net.connect(443, 'openrelay.metered.ca', () => {
-      console.log(`✅ TCP connection to openrelay.metered.ca:443 SUCCEEDED`);
+    const socket = net.connect(TURN_PORT, TURN_HOST, () => {
+      console.log(`✅ TCP connection to ${TURN_HOST}:${TURN_PORT} SUCCEEDED`);
       socket.end();
       resolve(true);
     });
@@ -40,19 +41,11 @@ async function testTcpConnectivity() {
   });
 }
 
-async function testTurnAllocation() {
-  console.log('\n=== Test 2: TURN Allocation (werift) ===');
-  console.log(`TURN URL: ${TURN_URL}`);
-  console.log(`Username: ${TURN_USERNAME}`);
+async function testTurnAllocation(name, config) {
+  console.log(`\n=== Test: ${name} ===`);
+  console.log(`Config: ${JSON.stringify(config)}`);
 
-  const pc = new RTCPeerConnection({
-    iceServers: [{
-      urls: TURN_URL,
-      username: TURN_USERNAME,
-      credential: TURN_CREDENTIAL,
-    }],
-    turnTransport: 'tcp',
-  });
+  const pc = new RTCPeerConnection(config);
 
   const results = {
     candidates: [],
@@ -62,28 +55,24 @@ async function testTurnAllocation() {
   };
 
   return new Promise(async (resolve) => {
-    // Collect all ICE candidates
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         const c = event.candidate;
         results.candidates.push(c);
-        const isRelay = c.candidate?.includes('typ relay');
-        console.log(`  Candidate #${results.candidates.length}: ${c.candidate?.slice(0, 100)}`);
-        if (isRelay) {
+        console.log(`  Candidate #${results.candidates.length}: ${c.candidate?.slice(0, 120)}`);
+        if (c.candidate?.includes('typ relay')) {
           results.hasRelay = true;
           console.log('  ✅ RELAY CANDIDATE DETECTED!');
         }
       } else {
-        // null candidate = gathering complete
         results.gatheringComplete = true;
         console.log(`\n  ICE gathering complete. Total candidates: ${results.candidates.length}`);
-        console.log(`  Has relay candidate: ${results.hasRelay}`);
       }
     };
 
     pc.onicecandidateerror = (event) => {
       results.errors.push(event);
-      console.log(`  ❌ ICE candidate error: code=${event.errorCode} text="${event.errorText}" url="${event.url}"`);
+      console.log(`  ❌ ICE ERROR: code=${event.errorCode} text="${event.errorText}" url="${event.url}"`);
     };
 
     pc.onicegatheringstatechange = () => {
@@ -94,30 +83,24 @@ async function testTurnAllocation() {
       console.log(`  ICE connection state: ${pc.iceConnectionState}`);
     };
 
-    // Create a transceiver and offer to trigger ICE gathering
     pc.addTransceiver('video', { direction: 'sendonly' });
     
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    console.log('  Offer created, ICE gathering started...');
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      console.log('  Offer created, ICE gathering started...');
+    } catch (err) {
+      console.log(`  ❌ Offer creation failed: ${err.message}`);
+    }
 
-    // Wait for gathering to complete or timeout
     setTimeout(() => {
-      console.log('\n=== Results ===');
-    if (results.hasRelay) {
-        console.log('✅ TURN ALLOCATION SUCCEEDED - relay candidate generated');
-      } else if (results.candidates.length === 0) {
-        console.log('❌ NO CANDIDATES GENERATED - TURN allocation failed silently');
-      } else {
-        console.log(`❌ NO RELAY CANDIDATE - only ${results.candidates.length} host/srflx candidates`);
-      }
+      console.log(`  Result: ${results.candidates.length} candidates, ${results.hasRelay ? 'HAS RELAY' : 'NO RELAY'}`);
       if (results.errors.length > 0) {
-        console.log(`  ICE errors: ${results.errors.length}`);
+        console.log(`  Errors: ${results.errors.length}`);
       }
-      console.log(`  Gathering complete: ${results.gatheringComplete}`);
       pc.close();
       resolve(results);
-    }, 15000); // 15 second timeout
+    }, 20000); // 20 second timeout
   });
 }
 
@@ -133,28 +116,65 @@ async function main() {
     process.exit(1);
   }
 
-  const turnResults = await testTurnAllocation();
+  // Test 1: Default config (UDP, no turnTransport)
+  const test1 = await testTurnAllocation('Default (UDP, no turnTransport)', {
+    iceServers: [{
+      urls: `turn:${TURN_HOST}:${TURN_PORT}`,
+      username: TURN_USERNAME,
+      credential: TURN_CREDENTIAL,
+    }],
+  });
+
+  // Test 2: TCP transport
+  const test2 = await testTurnAllocation('TCP transport', {
+    iceServers: [{
+      urls: `turn:${TURN_HOST}:${TURN_PORT}`,
+      username: TURN_USERNAME,
+      credential: TURN_CREDENTIAL,
+    }],
+    turnTransport: 'tcp',
+  });
+
+  // Test 3: URL with transport=tcp
+  const test3 = await testTurnAllocation('URL with transport=tcp', {
+    iceServers: [{
+      urls: `turn:${TURN_HOST}:${TURN_PORT}?transport=tcp`,
+      username: TURN_USERNAME,
+      credential: TURN_CREDENTIAL,
+    }],
+  });
+
+  // Test 4: TCP transport + URL with transport=tcp
+  const test4 = await testTurnAllocation('TCP transport + URL transport=tcp', {
+    iceServers: [{
+      urls: `turn:${TURN_HOST}:${TURN_PORT}?transport=tcp`,
+      username: TURN_USERNAME,
+      credential: TURN_CREDENTIAL,
+    }],
+    turnTransport: 'tcp',
+  });
 
   console.log('\n========================================');
-  console.log('CONCLUSION');
+  console.log('SUMMARY');
   console.log('========================================');
-  if (turnResults.hasRelay) {
-    console.log('✅ TURN WORKS from Codespaces');
-    console.log('The problem is in the application code, not networking.');
+  console.log(`Test 1 (Default UDP): ${test1.hasRelay ? '✅ RELAY' : '❌ NO RELAY'} (${test1.candidates.length} candidates)`);
+  console.log(`Test 2 (TCP transport): ${test2.hasRelay ? '✅ RELAY' : '❌ NO RELAY'} (${test2.candidates.length} candidates)`);
+  console.log(`Test 3 (URL transport=tcp): ${test3.hasRelay ? '✅ RELAY' : '❌ NO RELAY'} (${test3.candidates.length} candidates)`);
+  console.log(`Test 4 (TCP + URL): ${test4.hasRelay ? '✅ RELAY' : '❌ NO RELAY'} (${test4.candidates.length} candidates)`);
+
+  const anyRelay = test1.hasRelay || test2.hasRelay || test3.hasRelay || test4.hasRelay;
+  if (anyRelay) {
+    console.log('\n✅ TURN CAN WORK from Codespaces - one of the configurations succeeded');
     process.exit(0);
   } else {
-    console.log('❌ TURN DOES NOT WORK from Codespaces');
-    if (turnResults.candidates.length === 0) {
-      console.log('No candidates at all - TURN allocation is failing completely.');
-    } else {
-      console.log('Only host/srflx candidates - TURN allocation is not completing.');
-    }
-    console.log('This is a Codespaces networking limitation or TURN server issue.');
+    console.log('\n❌ TURN DOES NOT WORK from Codespaces');
+    console.log('All configurations failed to generate a relay candidate.');
+    console.log('This is a Codespaces networking limitation.');
     process.exit(1);
   }
 }
 
 main().catch(err => {
-  console.error('Test failed with error:', err);
+  console.error('Test failed:', err);
   process.exit(1);
 });
