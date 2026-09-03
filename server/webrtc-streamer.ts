@@ -155,10 +155,26 @@ export class WebRTCStreamer {
 
     this.pc = new RTCPeerConnection({
       iceServers,
-    });
+      // Force TCP for TURN allocation (Codespaces blocks UDP)
+      forceTurnTCP: true,
+    } as import('werift').RTCConfiguration);
 
-    // Track candidate count for diagnostics
+    // Track candidate count and relay status for diagnostics
     let candidateCount = 0;
+    let hasRelayCandidate = false;
+    const hasTurnServer = iceServers.some(s => s.urls && (s.urls.startsWith('turn:') || s.urls.startsWith('turns:')));
+
+    // TURN allocation timeout detection: if we have a TURN server configured
+    // but no relay candidate appears within 10 seconds, log a diagnostic warning
+    let turnTimeout: ReturnType<typeof setTimeout> | null = null;
+    if (hasTurnServer) {
+      turnTimeout = setTimeout(() => {
+        if (!hasRelayCandidate) {
+          console.warn('[WebRTC] TURN allocation timeout: no relay candidate after 10s. TURN server may be unreachable or allocation failed.');
+          console.warn(`[WebRTC] Current candidates: ${candidateCount} (host/srflx only)`);
+        }
+      }, 10000);
+    }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (this.pc as any).onicecandidate = (event: { candidate: unknown }) => {
@@ -166,11 +182,23 @@ export class WebRTCStreamer {
         candidateCount++;
         const c = event.candidate as { candidate?: string; type?: string };
         console.log(`[WebRTC] Server ICE candidate #${candidateCount}: ${c.candidate?.slice(0, 80) ?? 'unknown'}`);
+        // Detect relay candidate (TURN)
+        if (c.candidate?.includes('typ relay') || c.candidate?.includes('typ relay')) {
+          hasRelayCandidate = true;
+          if (turnTimeout) {
+            clearTimeout(turnTimeout);
+            turnTimeout = null;
+          }
+        }
         if (this.iceCandidateCallback) {
           this.iceCandidateCallback(event.candidate);
         }
       } else {
-        console.log(`[WebRTC] Server ICE gathering complete. Total candidates: ${candidateCount}`);
+        console.log(`[WebRTC] Server ICE gathering complete. Total candidates: ${candidateCount}, hasRelay: ${hasRelayCandidate}`);
+        if (turnTimeout) {
+          clearTimeout(turnTimeout);
+          turnTimeout = null;
+        }
       }
     };
 
@@ -185,6 +213,11 @@ export class WebRTCStreamer {
     this.pc.oniceconnectionstatechange = () => {
       const state = this.pc?.iceConnectionState;
       console.log(`[WebRTC] ICE connection state: ${state}`);
+    };
+
+    // Log ICE candidate errors (TURN allocation failures, etc.)
+    this.pc.onicecandidateerror = (event: { errorCode?: number; errorText?: string; hostCandidate?: string; url?: string }) => {
+      console.error(`[WebRTC] ICE candidate error: code=${event.errorCode} text="${event.errorText}" url="${event.url}" host="${event.hostCandidate}`);
     };
 
     this.pc.onconnectionstatechange = () => {

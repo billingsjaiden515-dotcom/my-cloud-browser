@@ -31,6 +31,8 @@ fi
 # 2. Run backend + frontend together.
 # Server runs under tsx (handles TS compilation + .js import specifiers).
 export PORT="${PORT:-3001}"
+# Enable werift ICE debug logging to diagnose TURN allocation failures
+export DEBUG="${DEBUG:-werift-ice}"
 exec npx concurrently \
   --names "server,vite" \
   --prefix-colors "cyan,green" \
