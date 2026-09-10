@@ -11,6 +11,10 @@ export interface BrowserInfo {
 const BROWSER_PATHS: Record<string, string[]> = {
   chromium: [
     '/nix/store',  // checked dynamically below
+    // macOS paths
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/Applications/Chromium.app/Contents/MacOS/Chromium',
+    // Linux paths
     '/usr/bin/chromium',
     '/usr/bin/chromium-browser',
     '/usr/bin/google-chrome',
@@ -18,11 +22,13 @@ const BROWSER_PATHS: Record<string, string[]> = {
     '/snap/bin/chromium',
   ],
   firefox: [
+    '/Applications/Firefox.app/Contents/MacOS/firefox',
     '/usr/bin/firefox',
     '/usr/bin/firefox-esr',
     '/snap/bin/firefox',
   ],
   brave: [
+    '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
     '/usr/bin/brave-browser',
     '/usr/bin/brave',
     '/opt/brave.com/brave/brave',

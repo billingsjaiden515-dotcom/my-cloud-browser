@@ -30,7 +30,8 @@ export class BrowserSession {
   private captureInterval: ReturnType<typeof setInterval> | null = null;
   private capturePending = false;
   private frameCounter = 0;
-  private readonly TARGET_FPS = 30;
+  private readonly TARGET_FPS = 20; // Reduced for better performance on VPS
+  private readonly JPEG_QUALITY = 60; // Lower quality = faster encoding
 
   constructor(sessionId: string, browserType = 'chromium') {
     this.sessionId = sessionId;
@@ -41,9 +42,13 @@ export class BrowserSession {
     const executablePath = getChromiumPath();
     console.log(`[BrowserSession] Launching ${this.browserType} at: ${executablePath}`);
 
+    // Use headful mode with Xvfb for tab strip visibility
+    // Xvfb must be running with DISPLAY=:99
+    const isHeadful = process.env.DISPLAY !== undefined;
+    
     this.browser = await puppeteer.launch({
       executablePath,
-      headless: true,
+      headless: isHeadful ? false : true,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -61,6 +66,11 @@ export class BrowserSession {
         '--disable-notifications',
         '--disable-popup-blocking',
         `--window-size=${VIEWPORT_WIDTH},${VIEWPORT_HEIGHT}`,
+        // Show tab strip in headful mode
+        ...(isHeadful ? [
+          '--enable-features=TouchpadOverscrollHistoryNavigation',
+          '--disable-features=SuppressUnsupportedFlagWarning',
+        ] : []),
       ],
     });
 
@@ -144,7 +154,7 @@ export class BrowserSession {
 
     this.capturePending = true;
 
-    page.screenshot({ type: 'jpeg', quality: 80 })
+    page.screenshot({ type: 'jpeg', quality: this.JPEG_QUALITY })
       .then((raw: Uint8Array) => {
         const jpegData = Buffer.from(raw);
         this.frameCounter++;
@@ -245,7 +255,15 @@ export class BrowserSession {
   async sendMouseMove(x: number, y: number): Promise<void> {
     const page = this.getActivePage();
     if (!page) return;
+    // Fire-and-forget for mouse moves to reduce latency
+    page.mouse.move(x, y).catch(() => {});
+  }
+  
+  async sendMouseWheel(x: number, y: number, deltaX: number, deltaY: number): Promise<void> {
+    const page = this.getActivePage();
+    if (!page) return;
     await page.mouse.move(x, y);
+    await page.mouse.wheel({ deltaX, deltaY });
   }
 
   async sendMouseScroll(deltaX: number, deltaY: number, x: number, y: number): Promise<void> {

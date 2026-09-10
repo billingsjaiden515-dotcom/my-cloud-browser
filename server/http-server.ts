@@ -41,8 +41,20 @@ export function createServer(): http.Server {
   app.post('/api/session/start', async (req, res) => {
     try {
       const { browserType = 'chromium' } = req.body as { browserType?: string };
+      
+      // Stop any existing sessions before starting a new one
+      const existingIds = sessionManager.getActiveSessionIds();
+      for (const id of existingIds) {
+        console.log(`[HTTP] Stopping orphaned session ${id} before starting new one`);
+        await sessionManager.stopSession(id).catch(() => {});
+      }
+      
+      // Wait for cleanup to complete
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
       const sessionId = await sessionManager.startSession(browserType);
       sessionManager.createStreamer(sessionId);
+      console.log(`[HTTP] Session ${sessionId} started successfully`);
       res.json({ sessionId, status: 'streaming', message: 'Browser session started' });
     } catch (e) {
       console.error('[HTTP] Failed to start session:', e);
