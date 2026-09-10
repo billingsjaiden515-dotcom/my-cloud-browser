@@ -18,16 +18,12 @@ echo "[1/8] Updating system packages..."
 sudo apt update && sudo apt upgrade -y
 
 # ------------------------------------------------------------
-# 2. Install Node.js 20.x LTS
+# 2. Install Node.js 22.x LTS (required by puppeteer-core)
 # ------------------------------------------------------------
-echo "[2/8] Installing Node.js 20.x..."
-if ! command -v node &> /dev/null; then
-    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-    sudo apt install -y nodejs
-    echo "Node.js installed: $(node --version)"
-else
-    echo "Node.js already installed: $(node --version)"
-fi
+echo "[2/8] Installing Node.js 22.x..."
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt install -y nodejs
+echo "Node.js installed: $(node --version)"
 
 # ------------------------------------------------------------
 # 3. Install Chromium Browser
@@ -101,6 +97,7 @@ npm run build
 # 8. Configure Firewall
 # ------------------------------------------------------------
 echo "[8/8] Configuring firewall..."
+sudo apt install -y ufw
 sudo ufw allow 22/tcp      # SSH
 sudo ufw allow 80/tcp      # HTTP (optional)
 sudo ufw allow 443/tcp     # HTTPS (optional)
