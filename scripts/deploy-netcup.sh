@@ -33,7 +33,14 @@ fi
 # 3. Install Chromium Browser
 # ------------------------------------------------------------
 echo "[3/8] Installing Chromium..."
-sudo apt install -y chromium-browser
+if apt-cache show chromium &>/dev/null; then
+    sudo apt install -y chromium
+elif apt-cache show chromium-browser &>/dev/null; then
+    sudo apt install -y chromium-browser
+else
+    echo "ERROR: Neither chromium nor chromium-browser package found"
+    exit 1
+fi
 
 # ------------------------------------------------------------
 # 4. Install FFmpeg
