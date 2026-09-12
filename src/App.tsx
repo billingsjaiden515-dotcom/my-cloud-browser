@@ -93,20 +93,28 @@ export default function App() {
     api.navigate(urlInput.trim());
   }, [api, urlInput, isConnected]);
 
-  // Browser logo component
-  const BrowserLogo = ({ name, size = 16 }: { name: string; size?: number }) => (
-    <img
-      src={`/icons/${name}.svg`}
-      alt={name}
-      width={size}
-      height={size}
-      className="shrink-0"
-      onError={(e) => {
-        // Fallback to globe icon if SVG fails
-        (e.target as HTMLImageElement).style.display = 'none';
-      }}
-    />
-  );
+  // Browser logo component - supports SVG and PNG icons
+  const BrowserLogo = ({ name, size = 16 }: { name: string; size?: number }) => {
+    const [src, setSrc] = useState(`/icons/${name}.svg`);
+    return (
+      <img
+        src={src}
+        alt={name}
+        width={size}
+        height={size}
+        className="shrink-0"
+        onError={() => {
+          // Try PNG fallback, then globe icon
+          if (src.endsWith('.svg')) {
+            setSrc(`/icons/${name}.png`);
+          } else {
+            (document.getElementById(`logo-${name}`) as HTMLImageElement).style.display = 'none';
+          }
+        }}
+        id={`logo-${name}`}
+      />
+    );
+  };
 
   return (
     <div
