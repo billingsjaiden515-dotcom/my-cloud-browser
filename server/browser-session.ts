@@ -43,11 +43,29 @@ export class BrowserSession {
   }
 
   async launch(): Promise<void> {
-    const executablePath = getChromiumPath();
+    // Import browser-finder dynamically to support multiple browsers
+    const { getChromiumPath, getBrowserInfo } = await import('./browser-finder.js');
+
+    // Find the correct executable based on browser type
+    let executablePath: string;
+    if (this.browserType === 'chromium') {
+      executablePath = getChromiumPath();
+    } else {
+      const browsers = getBrowserInfo();
+      const browser = browsers.find(b => b.name === this.browserType);
+      if (!browser?.available) {
+        throw new Error(`Browser '${this.browserType}' not found. Available: ${browsers.filter(b => b.available).map(b => b.name).join(', ')}`);
+      }
+      executablePath = browser.executablePath;
+    }
+
     console.log(`[BrowserSession] Launching ${this.browserType} at: ${executablePath}`);
 
     // Use headful mode with Xvfb for tab strip visibility
-    // Xvfb must be running with DISPLAY=:99
+    // Default to :99 if DISPLAY not set but Xvfb is likely running
+    if (process.env.DISPLAY === undefined && require('fs').existsSync('/tmp/.X99-lock')) {
+      process.env.DISPLAY = ':99';
+    }
     const isHeadful = process.env.DISPLAY !== undefined;
     
     this.browser = await puppeteer.launch({
