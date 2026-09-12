@@ -94,6 +94,7 @@ export class BrowserSession {
         '--disable-infobars',
         '--disable-notifications',
         '--disable-popup-blocking',
+        `--window-position=0,0`,
         `--window-size=${VIEWPORT_WIDTH},${VIEWPORT_HEIGHT}`,
         // Show tab strip in headful mode
         ...(isHeadful ? [

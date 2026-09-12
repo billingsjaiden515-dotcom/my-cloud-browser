@@ -31,14 +31,27 @@ const MODIFIER_KEYS = new Set(['Control', 'Shift', 'Alt', 'Meta']);
 export function BrowserViewport({ api, connectionState, videoRef, immersive }: BrowserViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const isConnected = connectionState === 'connected';
+  // Track drag state: which button is currently held down
+  const dragRef = useRef<{ button: 'left' | 'right' | 'middle' } | null>(null);
+  // Track actual viewport dimensions (not video element dimensions which may be 0 for WebRTC)
+  const viewportRef = useRef<{ w: number; h: number }>({ w: 1280, h: 800 });
+  // Track last requested viewport size to prevent resize loops
+  const lastViewportRequestRef = useRef<{ w: number; h: number }>({ w: 1280, h: 800 });
 
-  const getRelativeCoords = useCallback((e: React.MouseEvent): { x: number; y: number } => {
+  // Called when viewport actually changes (from setViewport response)
+  const updateViewportRef = useCallback((w: number, h: number) => {
+    viewportRef.current = { w, h };
+  }, []);
+
+  const getRelativeCoords = useCallback((e: { clientX: number; clientY: number }): { x: number; y: number } => {
     const video = videoRef.current;
     if (!video) return { x: 0, y: 0 };
 
     const rect = video.getBoundingClientRect();
-    const videoW = video.videoWidth || 1280;
-    const videoH = video.videoHeight || 800;
+    // Use tracked viewport dimensions instead of video.videoWidth/videoHeight
+    // WebRTC streams may report 0 for these properties
+    const videoW = viewportRef.current.w;
+    const videoH = viewportRef.current.h;
 
     // Account for object-contain letterboxing
     const videoAspect = videoW / videoH;
@@ -72,15 +85,36 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
     containerRef.current?.focus();
     const { x, y } = getRelativeCoords(e);
     const button = e.button === 2 ? 'right' : e.button === 1 ? 'middle' : 'left';
+    dragRef.current = { button };
     api.sendMouseDown(x, y, button);
+    // Attach window-level listeners for reliable drag tracking outside video bounds
+    const onMove = (we: MouseEvent) => {
+      if (!dragRef.current) return;
+      const coords = getRelativeCoords(we);
+      api.sendMouseMove(coords.x, coords.y);
+    };
+    const onUp = (we: MouseEvent) => {
+      if (dragRef.current) {
+        const coords = getRelativeCoords(we);
+        api.sendMouseUp(coords.x, coords.y, dragRef.current.button);
+        dragRef.current = null;
+      }
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
   }, [isConnected, getRelativeCoords, api]);
 
   const handleMouseUp = useCallback((e: React.MouseEvent) => {
     if (!isConnected) return;
     e.preventDefault();
-    const { x, y } = getRelativeCoords(e);
-    const button = e.button === 2 ? 'right' : e.button === 1 ? 'middle' : 'left';
-    api.sendMouseUp(x, y, button);
+    if (dragRef.current) {
+      const { x, y } = getRelativeCoords(e);
+      api.sendMouseUp(x, y, dragRef.current.button);
+      dragRef.current = null;
+    }
+    // Window-level listeners are removed by the onUp callback itself
   }, [isConnected, getRelativeCoords, api]);
 
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
@@ -135,6 +169,17 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
     e.preventDefault();
   }, []);
 
+  // Disconnect cleanup: release mouse buttons and clear modifiers on disconnect
+  useEffect(() => {
+    if (!isConnected) {
+      if (dragRef.current) {
+        api.sendMouseUp(0, 0, dragRef.current.button);
+        dragRef.current = null;
+      }
+      ['Control', 'Shift', 'Alt', 'Meta'].forEach(mod => api.sendKeyUp(mod));
+    }
+  }, [isConnected, api]);
+
   // Passive wheel listener on the container to allow preventDefault
   useEffect(() => {
     const el = containerRef.current;
@@ -160,6 +205,12 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
       let h = Math.round(rect.height);
       if (w % 2 !== 0) w++;
       if (h % 2 !== 0) h++;
+      // Prevent resize loops: only call setViewport if size changed significantly (>50px)
+      const last = lastViewportRequestRef.current;
+      const dw = Math.abs(w - last.w);
+      const dh = Math.abs(h - last.h);
+      if (dw < 50 && dh < 50) return;
+      lastViewportRequestRef.current = { w, h };
       api.setViewport(w, h);
     };
 
