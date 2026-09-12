@@ -62,18 +62,25 @@ export class BrowserSession {
     console.log(`[BrowserSession] Launching ${this.browserType} at: ${executablePath}`);
 
     // Use headful mode with Xvfb for tab strip visibility
-    // Default to :99 if DISPLAY not set but Xvfb is likely running
-    if (process.env.DISPLAY === undefined && require('fs').existsSync('/tmp/.X99-lock')) {
-      process.env.DISPLAY = ':99';
+    // Auto-detect Xvfb if DISPLAY not set
+    const fs = await import('fs');
+    if (!process.env.DISPLAY) {
+      // Check for Xvfb lock files
+      if (fs.existsSync('/tmp/.X99-lock')) {
+        process.env.DISPLAY = ':99';
+      } else if (fs.existsSync('/tmp/.X11-unix/X99')) {
+        process.env.DISPLAY = ':99';
+      }
     }
-    const isHeadful = process.env.DISPLAY !== undefined;
+    const isHeadful = !!process.env.DISPLAY;
+    const display = process.env.DISPLAY || ':99';
     
     this.browser = await puppeteer.launch({
       executablePath,
       headless: isHeadful ? false : true,
       env: {
         ...process.env,
-        DISPLAY: process.env.DISPLAY || ':99',
+        DISPLAY: display,
       },
       args: [
         '--no-sandbox',
@@ -92,7 +99,7 @@ export class BrowserSession {
         '--disable-notifications',
         '--disable-popup-blocking',
         `--window-size=${VIEWPORT_WIDTH},${VIEWPORT_HEIGHT}`,
-        `--display=${process.env.DISPLAY || ':99'}`,
+        `--display=${display}`,
         // Show tab strip in headful mode
         ...(isHeadful ? [
           '--enable-features=TouchpadOverscrollHistoryNavigation',
