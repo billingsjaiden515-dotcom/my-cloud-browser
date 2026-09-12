@@ -106,6 +106,16 @@ export class Vp8Encoder extends EventEmitter {
       this.parseIvf();
     });
 
+    // Handle stdin errors (EPIPE when ffmpeg exits) gracefully
+    proc.stdin!.on('error', (err: Error) => {
+      if ((err as any).code === 'EPIPE') {
+        console.log('[VP8Encoder] stdin pipe closed (ffmpeg exited)');
+      } else {
+        console.error(`[VP8Encoder] stdin error: ${err.message}`);
+      }
+      this.ffmpegFailed = true;
+    });
+
     // Log ALL stderr so we can see the real failure reason (e.g. "Unknown encoder",
     // "pulseaudio: ...", "Cannot open ..."). Filtering only lines containing
     // "error" hid critical diagnostics on Render.
@@ -179,13 +189,19 @@ export class Vp8Encoder extends EventEmitter {
       const frame = this.queue.shift()!;
 
       // Space writes a small amount to avoid blocking the event loop
-      const ok = this.ffmpeg.stdin.write(frame.data);
-      if (!ok) {
-        // stdin buffer full: drop this frame and wait a tick
-        this.droppedFrames++;
-        await new Promise(r => setImmediate(r));
-      } else {
-        this.frameCount++;
+      try {
+        const ok = this.ffmpeg.stdin.write(frame.data);
+        if (!ok) {
+          // stdin buffer full: drop this frame and wait a tick
+          this.droppedFrames++;
+          await new Promise(r => setImmediate(r));
+        } else {
+          this.frameCount++;
+        }
+      } catch (e) {
+        // stdin write failed (EPIPE, etc.) - ffmpeg likely exited
+        this.ffmpegFailed = true;
+        break;
       }
 
       await new Promise(r => setImmediate(r));
