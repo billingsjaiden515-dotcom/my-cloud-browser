@@ -71,6 +71,10 @@ export class BrowserSession {
     this.browser = await puppeteer.launch({
       executablePath,
       headless: isHeadful ? false : true,
+      env: {
+        ...process.env,
+        DISPLAY: process.env.DISPLAY || ':99',
+      },
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -88,6 +92,7 @@ export class BrowserSession {
         '--disable-notifications',
         '--disable-popup-blocking',
         `--window-size=${VIEWPORT_WIDTH},${VIEWPORT_HEIGHT}`,
+        `--display=${process.env.DISPLAY || ':99'}`,
         // Show tab strip in headful mode
         ...(isHeadful ? [
           '--enable-features=TouchpadOverscrollHistoryNavigation',
