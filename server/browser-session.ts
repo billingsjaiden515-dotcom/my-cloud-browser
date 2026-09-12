@@ -174,23 +174,23 @@ export class BrowserSession {
 
     this.x11recvBuf = Buffer.alloc(0);
 
-    this.x11ffmpeg.stdout.on('data', (chunk: Buffer) => {
+    this.x11ffmpeg!.stdout!.on('data', (chunk: Buffer) => {
       this.x11recvBuf = Buffer.concat([this.x11recvBuf, chunk]);
       this.extractJpegFrames();
     });
 
-    this.x11ffmpeg.stderr.on('data', (chunk: Buffer) => {
+    this.x11ffmpeg!.stderr!.on('data', (chunk: Buffer) => {
       // Only log errors, not every frame
     });
 
-    this.x11ffmpeg.on('close', (code: number) => {
+    this.x11ffmpeg!.on('close', (code: number) => {
       if (this.screencastActive) {
         console.error(`[BrowserSession] x11grab process exited unexpectedly (code ${code})`);
       }
       this.x11ffmpeg = null;
     });
 
-    this.x11ffmpeg.on('error', (err: Error) => {
+    this.x11ffmpeg!.on('error', (err: Error) => {
       console.error(`[BrowserSession] x11grab process error: ${err.message}`);
       this.x11ffmpeg = null;
     });
