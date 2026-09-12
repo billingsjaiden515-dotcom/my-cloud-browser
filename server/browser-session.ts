@@ -28,6 +28,8 @@ export class BrowserSession {
   private browserType: string;
   private viewportWidth = VIEWPORT_WIDTH;
   private viewportHeight = VIEWPORT_HEIGHT;
+  private viewportDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly VIEWPORT_DEBOUNCE_MS = 500;
   private captureInterval: ReturnType<typeof setInterval> | null = null;
   private capturePending = false;
   private frameCounter = 0;
@@ -291,7 +293,7 @@ export class BrowserSession {
    * Update the browser viewport and restart screencast if active.
    * Used for responsive resolution.
    */
-  async setViewport(width: number, height: number): Promise<void> {
+  setViewport(width: number, height: number): void {
     // Clamp to Xvfb display size in headful mode to prevent coordinate mismatch
     const maxW = process.env.DISPLAY ? VIEWPORT_WIDTH : 1920;
     const maxH = process.env.DISPLAY ? VIEWPORT_HEIGHT : 1080;
@@ -301,22 +303,32 @@ export class BrowserSession {
     if (width % 2 !== 0) width++;
     if (height % 2 !== 0) height++;
 
+    // Skip if viewport hasn't actually changed
     if (width === this.viewportWidth && height === this.viewportHeight) return;
 
-    const wasScreencasting = this.screencastActive;
-    if (wasScreencasting) await this.stopScreencast();
-
-    this.viewportWidth = width;
-    this.viewportHeight = height;
-
-    const page = this.getActivePage();
-    if (page) {
-      await page.setViewport({ width, height, deviceScaleFactor: 1 }).catch(() => {});
+    // Debounce viewport changes to prevent resize loops
+    if (this.viewportDebounceTimer) {
+      clearTimeout(this.viewportDebounceTimer);
     }
 
-    if (wasScreencasting) await this.startScreencast();
+    this.viewportDebounceTimer = setTimeout(async () => {
+      this.viewportDebounceTimer = null;
 
-    console.log(`[BrowserSession] Viewport updated to ${width}x${height}`);
+      const wasScreencasting = this.screencastActive;
+      if (wasScreencasting) await this.stopScreencast();
+
+      this.viewportWidth = width;
+      this.viewportHeight = height;
+
+      const page = this.getActivePage();
+      if (page) {
+        await page.setViewport({ width, height, deviceScaleFactor: 1 }).catch(() => {});
+      }
+
+      if (wasScreencasting) await this.startScreencast();
+
+      console.log(`[BrowserSession] Viewport updated to ${width}x${height}`);
+    }, this.VIEWPORT_DEBOUNCE_MS);
   }
 
   // ─── Input methods ───────────────────────────────────────────────────────────

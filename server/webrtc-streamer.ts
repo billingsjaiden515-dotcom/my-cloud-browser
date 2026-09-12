@@ -238,6 +238,10 @@ export class WebRTCStreamer {
     const audioTransceiver = this.pc.addTransceiver('audio', { direction: 'sendonly' });
     this.audioSender = audioTransceiver.sender;
 
+    if (!this.pc) {
+      throw new Error('Peer connection is null - streamer may have been stopped');
+    }
+
     const offer = new RTCSessionDescription(offerSdp, 'offer');
     await this.pc.setRemoteDescription(offer);
     console.log('[WebRTC] Remote description set');
