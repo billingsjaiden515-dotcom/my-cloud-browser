@@ -169,6 +169,7 @@ export class BrowserSession {
       '-f', 'image2pipe',
       '-vcodec', 'mjpeg',
       '-q:v', String(Math.round((100 - this.JPEG_QUALITY) / 10)),
+      'pipe:1',
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
 
     this.x11recvBuf = Buffer.alloc(0);
