@@ -292,9 +292,11 @@ export class BrowserSession {
    * Used for responsive resolution.
    */
   async setViewport(width: number, height: number): Promise<void> {
-    // Clamp to reasonable bounds
-    width = Math.max(320, Math.min(1920, Math.round(width)));
-    height = Math.max(240, Math.min(1080, Math.round(height)));
+    // Clamp to Xvfb display size in headful mode to prevent coordinate mismatch
+    const maxW = process.env.DISPLAY ? VIEWPORT_WIDTH : 1920;
+    const maxH = process.env.DISPLAY ? VIEWPORT_HEIGHT : 1080;
+    width = Math.max(320, Math.min(maxW, Math.round(width)));
+    height = Math.max(240, Math.min(maxH, Math.round(height)));
     // Round to even numbers (codec-friendly)
     if (width % 2 !== 0) width++;
     if (height % 2 !== 0) height++;
@@ -322,12 +324,15 @@ export class BrowserSession {
   async sendMouseClick(x: number, y: number, button: 'left' | 'right' | 'middle' = 'left'): Promise<void> {
     const page = this.getActivePage();
     if (!page) return;
+    // Ensure page has focus before clicking
+    await page.bringToFront().catch(() => {});
     await page.mouse.click(x, y, { button });
   }
 
   async sendMouseDown(x: number, y: number, button: 'left' | 'right' | 'middle' = 'left'): Promise<void> {
     const page = this.getActivePage();
     if (!page) return;
+    await page.bringToFront().catch(() => {});
     await page.mouse.move(x, y);
     await page.mouse.down({ button });
   }
@@ -372,18 +377,21 @@ export class BrowserSession {
   async sendKeyDown(key: string): Promise<void> {
     const page = this.getActivePage();
     if (!page) return;
+    await page.bringToFront().catch(() => {});
     await page.keyboard.down(key as import('puppeteer-core').KeyInput);
   }
 
   async sendKeyUp(key: string): Promise<void> {
     const page = this.getActivePage();
     if (!page) return;
+    await page.bringToFront().catch(() => {});
     await page.keyboard.up(key as import('puppeteer-core').KeyInput);
   }
 
   async sendKeyPress(key: string): Promise<void> {
     const page = this.getActivePage();
     if (!page) return;
+    await page.bringToFront().catch(() => {});
     await page.keyboard.press(key as import('puppeteer-core').KeyInput);
   }
 
