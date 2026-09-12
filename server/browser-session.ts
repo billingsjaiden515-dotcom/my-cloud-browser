@@ -317,6 +317,9 @@ export class BrowserSession {
   /**
    * Update the browser viewport and restart screencast if active.
    * Used for responsive resolution.
+   * 
+   * IMPORTANT: Small changes (< 20px) are ignored to prevent resize loops
+   * caused by video element CSS changes triggering ResizeObserver.
    */
   setViewport(width: number, height: number): void {
     // Clamp to Xvfb display size in headful mode to prevent coordinate mismatch
@@ -327,6 +330,11 @@ export class BrowserSession {
     // Round to even numbers (codec-friendly)
     if (width % 2 !== 0) width++;
     if (height % 2 !== 0) height++;
+
+    // Skip tiny changes (< 20px) to prevent resize loops from CSS jitter
+    const dw = Math.abs(width - this.viewportWidth);
+    const dh = Math.abs(height - this.viewportHeight);
+    if (dw < 20 && dh < 20) return;
 
     // Skip if viewport hasn't actually changed
     if (width === this.viewportWidth && height === this.viewportHeight) return;
