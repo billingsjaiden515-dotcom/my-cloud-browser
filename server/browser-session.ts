@@ -83,7 +83,6 @@ export class BrowserSession {
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-gpu',
-        '--disable-software-rasterizer',
         '--no-first-run',
         '--no-default-browser-check',
         '--disable-extensions',
@@ -96,6 +95,7 @@ export class BrowserSession {
         '--disable-popup-blocking',
         `--window-position=0,0`,
         `--window-size=${VIEWPORT_WIDTH},${VIEWPORT_HEIGHT}`,
+        '--window-position=0,0',
         // Show tab strip in headful mode
         ...(isHeadful ? [
           '--enable-features=TouchpadOverscrollHistoryNavigation',
@@ -323,45 +323,34 @@ export class BrowserSession {
    * caused by video element CSS changes triggering ResizeObserver.
    */
   setViewport(width: number, height: number): void {
-    // Clamp to Xvfb display size in headful mode to prevent coordinate mismatch
-    const maxW = process.env.DISPLAY ? VIEWPORT_WIDTH : 1920;
-    const maxH = process.env.DISPLAY ? VIEWPORT_HEIGHT : 1080;
-    width = Math.max(320, Math.min(maxW, Math.round(width)));
-    height = Math.max(240, Math.min(maxH, Math.round(height)));
-    // Round to even numbers (codec-friendly)
+    // In headful mode (Xvfb), NEVER change the viewport — the Chromium window size is
+    // fixed by --window-size at launch and the Xvfb display has the same dimensions.
+    // Calling page.setViewport() physically resizes the window, which triggers
+    // CDP layout changes that cause violent resize loops and screencast restarts.
+    if (process.env.DISPLAY) {
+      return;
+    }
+
+    // Headless mode: clamp to reasonable bounds
+    width = Math.max(320, Math.min(1920, Math.round(width)));
+    height = Math.max(240, Math.min(1080, Math.round(height)));
     if (width % 2 !== 0) width++;
     if (height % 2 !== 0) height++;
 
-    // Skip tiny changes (< 20px) to prevent resize loops from CSS jitter
-    const dw = Math.abs(width - this.viewportWidth);
-    const dh = Math.abs(height - this.viewportHeight);
-    if (dw < 20 && dh < 20) return;
-
-    // Skip if viewport hasn't actually changed
+    // Skip tiny changes to prevent resize loops
+    if (Math.abs(width - this.viewportWidth) < 20 && Math.abs(height - this.viewportHeight) < 20) return;
     if (width === this.viewportWidth && height === this.viewportHeight) return;
 
-    // Debounce viewport changes to prevent resize loops
-    if (this.viewportDebounceTimer) {
-      clearTimeout(this.viewportDebounceTimer);
-    }
-
+    if (this.viewportDebounceTimer) clearTimeout(this.viewportDebounceTimer);
     this.viewportDebounceTimer = setTimeout(async () => {
       this.viewportDebounceTimer = null;
-
       const wasScreencasting = this.screencastActive;
       if (wasScreencasting) await this.stopScreencast();
-
       this.viewportWidth = width;
       this.viewportHeight = height;
-
       const page = this.getActivePage();
-      if (page) {
-        await page.setViewport({ width, height, deviceScaleFactor: 1 }).catch(() => {});
-      }
-
+      if (page) await page.setViewport({ width, height, deviceScaleFactor: 1 }).catch(() => {});
       if (wasScreencasting) await this.startScreencast();
-
-      console.log(`[BrowserSession] Viewport updated to ${width}x${height}`);
     }, this.VIEWPORT_DEBOUNCE_MS);
   }
 

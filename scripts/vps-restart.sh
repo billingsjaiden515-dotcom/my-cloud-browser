@@ -25,15 +25,15 @@ echo "Rebuilding..."
 npm run build
 npx tsc -p tsconfig.server.json
 
-# Start Xvfb
+# Start Xvfb with larger display for headful Chromium
 echo "Starting Xvfb..."
-Xvfb :99 -screen 0 1280x800x24 &
+Xvfb :99 -screen 0 1920x1080x24 &
 sleep 1
 
 # Verify Xvfb
 if ! xdpyinfo -display :99 >/dev/null 2>&1; then
   echo "ERROR: Xvfb failed to start!"
-  echo "Try: rm -f /tmp/.X99-lock && Xvfb :99 -screen 0 1280x800x24 &"
+  echo "Try: rm -f /tmp/.X99-lock && Xvfb :99 -screen 0 1920x1080x24 &"
   exit 1
 fi
 

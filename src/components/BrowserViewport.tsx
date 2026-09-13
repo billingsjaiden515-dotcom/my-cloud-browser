@@ -73,9 +73,10 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
     const scaleX = videoW / renderedW;
     const scaleY = videoH / renderedH;
 
+    // Clamp to valid viewport bounds (clicks in letterboxing bars get clamped to edge)
     return {
-      x: Math.round((e.clientX - rect.left - offsetX) * scaleX),
-      y: Math.round((e.clientY - rect.top - offsetY) * scaleY),
+      x: Math.max(0, Math.min(videoW, Math.round((e.clientX - rect.left - offsetX) * scaleX))),
+      y: Math.max(0, Math.min(videoH, Math.round((e.clientY - rect.top - offsetY) * scaleY))),
     };
   }, [videoRef]);
 
@@ -189,46 +190,10 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
     return () => el.removeEventListener('wheel', onWheel);
   }, [isConnected]);
 
-  // Responsive resolution: watch the container size and request a matching
-  // capture resolution from the server (debounced to avoid churn).
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el || !isConnected) return;
-
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const updateViewport = () => {
-      const rect = el.getBoundingClientRect();
-      if (rect.width < 10 || rect.height < 10) return;
-      // Round to even numbers (codec-friendly) and clamp to sane bounds.
-      let w = Math.round(rect.width);
-      let h = Math.round(rect.height);
-      if (w % 2 !== 0) w++;
-      if (h % 2 !== 0) h++;
-      // Prevent resize loops: only call setViewport if size changed significantly (>50px)
-      const last = lastViewportRequestRef.current;
-      const dw = Math.abs(w - last.w);
-      const dh = Math.abs(h - last.h);
-      if (dw < 50 && dh < 50) return;
-      lastViewportRequestRef.current = { w, h };
-      api.setViewport(w, h);
-    };
-
-    const onResize = () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(updateViewport, 500);
-    };
-
-    const observer = new ResizeObserver(onResize);
-    observer.observe(el);
-    // Initial call once connected
-    updateViewport();
-
-    return () => {
-      observer.disconnect();
-      if (debounceTimer) clearTimeout(debounceTimer);
-    };
-  }, [isConnected, api]);
+  // NOTE: Viewport resizing removed. In headful mode (Xvfb) the Chromium
+  // window has a fixed 1280x800 size. CSS object-contain scales the video
+  // for display. Calling setViewport would physically resize the X11 window
+  // and trigger a resize feedback loop.
 
   return (
     <div
