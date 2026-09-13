@@ -48,8 +48,12 @@ export class BrowserSession {
   private winY = 0;
   private winW = VIEWPORT_WIDTH;
   private winH = VIEWPORT_HEIGHT + 80;
-  // Chrome offset: how far the page viewport origin is from the capture origin.
+  // Chrome offset: how far the page viewport origin is from the capture origin
+  // inside the capture region itself (direct, no rescaling needed).
+  // NOTE: a WRONG chrome value shifts ALL page Y coords by the error amount.
+  // When in doubt, set CHROME_BROWSER_TOP=0 so clicks pass through unshifted.
   private browserChromeLeft = 0;
+  // Window position on the Xvfb root (for xdotool screen coords only).
   // Parking spot for the X11 pointer: inside the 1920x1080 Xvfb display but
   // OUTSIDE the captured window region, so it never appears in the stream.
   private readonly PARK_X = 1850;
@@ -397,21 +401,26 @@ export class BrowserSession {
     const envTop = process.env.CHROME_BROWSER_TOP;
     if (envTop) this.browserChromeTop = Math.max(0, parseInt(envTop, 10) || 0);
 
-    const vp = page.viewport() || { width: VIEWPORT_WIDTH, height: VIEWPORT_HEIGHT };
-    const vpW = vp.width || VIEWPORT_WIDTH;
-    const vpH = vp.height || VIEWPORT_HEIGHT;
-
     for (const cls of ['chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable', 'Chromium', 'crx_']) {
       const geo = await this.xdotoolWindowGeometry(cls);
       if (!geo) continue;
       this.winX = geo.X;
       this.winY = geo.Y;
-      this.winW = Math.max(vpW, geo.WIDTH);
-      this.winH = Math.max(vpH, geo.HEIGHT);
-      // The page viewport bottom aligns with the window bottom (no bottom chrome),
-      // so chrome offset = window origin + window size - viewport size.
-      this.browserChromeTop = Math.max(0, this.winY + geo.HEIGHT - vpH);
-      this.browserChromeLeft = Math.max(0, this.winX + geo.WIDTH - vpW);
+      this.winW = geo.WIDTH;
+      this.winH = geo.HEIGHT;
+
+      // Measure the REAL physical page area inside the window. This is the
+      // only reliable source: the emulated viewport (page.viewport()) can be
+      // stale/soft — using it shifts every page click by the error amount.
+      const inner = await page.evaluate(() => ({ w: window.innerWidth, h: window.innerHeight })).catch(() => null);
+      if (inner && inner.w > 0 && inner.h > 0) {
+        // Page area is bottom-right aligned inside the window (no bottom chrome).
+        // chrome offset = window size - page area.
+        this.browserChromeTop = Math.max(0, geo.HEIGHT - inner.h);
+        this.browserChromeLeft = Math.max(0, geo.WIDTH - inner.w);
+        this.viewportWidth = inner.w;
+        this.viewportHeight = inner.h;
+      }
       break;
     }
 
@@ -421,7 +430,8 @@ export class BrowserSession {
 
     console.log(
       `[BrowserSession] Geometry: window ${this.winW}x${this.winH} at (${this.winX},${this.winY}) ` +
-      `chromeTop=${this.browserChromeTop}px chromeLeft=${this.browserChromeLeft}px (set CHROME_BROWSER_TOP to tune)`,
+      `chromeTop=${this.browserChromeTop}px chromeLeft=${this.browserChromeLeft}px ` +
+      `page=${this.viewportWidth}x${this.viewportHeight} (set CHROME_BROWSER_TOP to tune)`,
     );
   }
 
@@ -528,14 +538,16 @@ export class BrowserSession {
 
   async sendMouseClick(x: number, y: number, button: 'left' | 'right' | 'middle' = 'left'): Promise<void> {
     const page = this.getActivePage();
-    if (!page) return;
+    if (!page) { console.warn(`[Input] click(${x},${y}) ignored: no active page`); return; }
     // Clicks in the browser chrome (tab strip / address bar) must go through
     // xdotool — Puppeteer cannot reach UI outside the page viewport.
     if (this.isInChrome(x, y)) {
+      console.log(`[Input] click(${x},${y}) ${button} -> CHROME (xdotool, chromeTop=${this.browserChromeTop})`);
       await this.x11Click(x, y, button);
       return;
     }
     const p = this.toPageCoords(x, y);
+    console.log(`[Input] click(${x},${y}) ${button} -> page(${p.x},${p.y})`);
     // Ensure page has focus before clicking
     await page.bringToFront().catch(() => {});
     await page.mouse.click(p.x, p.y, { button });
