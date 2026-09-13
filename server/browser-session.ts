@@ -116,8 +116,9 @@ export class BrowserSession {
         '--disable-notifications',
         '--disable-popup-blocking',
         `--window-position=0,0`,
-        `--window-size=${VIEWPORT_WIDTH},${VIEWPORT_HEIGHT}`,
-        '--window-position=0,0',
+        // +80 for Chromium's tab strip / address bar so the PAGE content area
+        // remains the full viewport size (chrome is drawn on top of the extra 80px).
+        `--window-size=${VIEWPORT_WIDTH},${VIEWPORT_HEIGHT + 80}`,
         // Show tab strip in headful mode
         ...(isHeadful ? [
           '--enable-features=TouchpadOverscrollHistoryNavigation',
@@ -162,6 +163,12 @@ export class BrowserSession {
   }
 
   private async setupPage(page: Page): Promise<void> {
+    // In headful/X11 mode, do NOT set an emulated viewport: CDP emulation makes
+    // window.innerWidth/innerHeight report the emulated size (1280x800) instead
+    // of the real page content area (~1280x720 after the ~80px chrome), which
+    // breaks measureChromeGeometry()'s chrome-offset calculation. Only emulate
+    // in headless mode, where there is no real window to fight with.
+    if (process.env.DISPLAY) return;
     await page.setViewport({
       width: this.viewportWidth,
       height: this.viewportHeight,
@@ -420,6 +427,10 @@ export class BrowserSession {
         this.browserChromeLeft = Math.max(0, geo.WIDTH - inner.w);
         this.viewportWidth = inner.w;
         this.viewportHeight = inner.h;
+        console.log(
+          `[BrowserSession] REAL geometry: window=${geo.WIDTH}x${geo.HEIGHT} ` +
+          `innerPage=${inner.w}x${inner.h} chromeTop=${this.browserChromeTop} chromeLeft=${this.browserChromeLeft}`,
+        );
       }
       break;
     }
