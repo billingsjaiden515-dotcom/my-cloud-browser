@@ -36,6 +36,12 @@ export class BrowserSession {
   private readonly TARGET_FPS = 20; // Reduced for better performance on VPS
   private readonly JPEG_QUALITY = 60; // Lower quality = faster encoding
   private x11ffmpeg: ChildProcess | null = null;
+  // Height of the browser chrome (tab strip / address bar) rendered at the top of
+  // the x11grab capture. Headful Chromium draws its own UI, so page viewport
+  // coordinates are offset from capture coordinates by this amount.
+  private browserChromeTop = 0;
+  private readonly DEFAULT_CHROME_TOP = 80; // fallback if measurement fails
+  private lastX11SyncTime = 0;
 
   constructor(sessionId: string, browserType = 'chromium') {
     this.sessionId = sessionId;
@@ -107,6 +113,16 @@ export class BrowserSession {
     const pages = await this.browser.pages();
     const page = pages[0] || (await this.browser.newPage());
     await this.setupPage(page);
+
+    // In headful mode, the page viewport is BELOW the browser chrome (tab strip +
+    // address bar), so capture coordinates are offset from page coordinates.
+    // Chromium's Linux tab-strip + omni consistent ~80px. Measurable on the VPS;
+    // overridable via CHROME_BROWSER_TOP env for fine-tuning.
+    if (isHeadful) {
+      const envTop = process.env.CHROME_BROWSER_TOP;
+      this.browserChromeTop = envTop ? Math.max(0, parseInt(envTop, 10) || 0) : this.DEFAULT_CHROME_TOP;
+      console.log(`[BrowserSession] Browser chrome top offset: ${this.browserChromeTop}px (set CHROME_BROWSER_TOP to tune)`);
+    }
 
     const tabId = this.getPageId(page);
     this.pages.set(tabId, page);
@@ -356,56 +372,103 @@ export class BrowserSession {
 
   // ─── Input methods ───────────────────────────────────────────────────────────
 
+  /**
+   * Convert capture/video coordinates (which include browser chrome at the top in
+   * headful x11grab mode) into page viewport coordinates for Puppeteer.
+   */
+  private toPageCoords(x: number, y: number): { x: number; y: number } {
+    const capH = this.viewportHeight;
+    const usableH = Math.max(1, capH - this.browserChromeTop);
+    return {
+      x: Math.max(0, Math.min(this.viewportWidth, Math.round(x))),
+      y: Math.max(0, Math.min(this.viewportHeight, Math.round((y - this.browserChromeTop) * (this.viewportHeight / usableH)))),
+    };
+  }
+
+  /**
+   * Move the real X11 cursor so it visibly tracks inside the captured stream
+   * (headful x11grab mode). Fire-and-forget; throttled to ~20 Hz.
+   */
+  private syncX11Cursor(videoX: number, videoY: number): void {
+    if (!process.env.DISPLAY) return;
+    const now = Date.now();
+    if (now - this.lastX11SyncTime < 50) return;
+    this.lastX11SyncTime = now;
+    try {
+      const proc = spawn('xdotool', [
+        'mousemove',
+        String(Math.floor(videoX)),
+        String(Math.floor(videoY + this.browserChromeTop)),
+      ], { stdio: 'ignore' });
+      proc.on('error', () => { /* xdotool not installed */ });
+      setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* done */ } }, 1500);
+    } catch { /* xdotool unavailable */ }
+  }
+
   async sendMouseClick(x: number, y: number, button: 'left' | 'right' | 'middle' = 'left'): Promise<void> {
     const page = this.getActivePage();
     if (!page) return;
+    const p = this.toPageCoords(x, y);
+    this.syncX11Cursor(x, y);
     // Ensure page has focus before clicking
     await page.bringToFront().catch(() => {});
-    await page.mouse.click(x, y, { button });
+    await page.mouse.click(p.x, p.y, { button });
   }
 
   async sendMouseDown(x: number, y: number, button: 'left' | 'right' | 'middle' = 'left'): Promise<void> {
     const page = this.getActivePage();
     if (!page) return;
+    const p = this.toPageCoords(x, y);
+    this.syncX11Cursor(x, y);
     await page.bringToFront().catch(() => {});
-    await page.mouse.move(x, y);
+    await page.mouse.move(p.x, p.y);
     await page.mouse.down({ button });
   }
 
   async sendMouseUp(x: number, y: number, button: 'left' | 'right' | 'middle' = 'left'): Promise<void> {
     const page = this.getActivePage();
     if (!page) return;
-    await page.mouse.move(x, y);
+    const p = this.toPageCoords(x, y);
+    await page.mouse.move(p.x, p.y);
     await page.mouse.up({ button });
   }
 
   async sendMouseDoubleClick(x: number, y: number, button: 'left' | 'right' | 'middle' = 'left'): Promise<void> {
     const page = this.getActivePage();
     if (!page) return;
+    const p = this.toPageCoords(x, y);
+    this.syncX11Cursor(x, y);
+    await page.bringToFront().catch(() => {});
     // Puppeteer's MouseClickOptions doesn't support clickCount in this version.
     // Simulate a double-click with two rapid clicks.
-    await page.mouse.click(x, y, { button });
-    await page.mouse.click(x, y, { button });
+    await page.mouse.click(p.x, p.y, { button });
+    await page.mouse.click(p.x, p.y, { button });
   }
 
   async sendMouseMove(x: number, y: number): Promise<void> {
     const page = this.getActivePage();
     if (!page) return;
+    const p = this.toPageCoords(x, y);
+    this.syncX11Cursor(x, y);
     // Fire-and-forget for mouse moves to reduce latency
-    page.mouse.move(x, y).catch(() => {});
+    page.mouse.move(p.x, p.y).catch(() => {});
   }
   
   async sendMouseWheel(x: number, y: number, deltaX: number, deltaY: number): Promise<void> {
     const page = this.getActivePage();
     if (!page) return;
-    await page.mouse.move(x, y);
+    const p = this.toPageCoords(x, y);
+    this.syncX11Cursor(x, y);
+    await page.mouse.move(p.x, p.y);
     await page.mouse.wheel({ deltaX, deltaY });
   }
 
   async sendMouseScroll(deltaX: number, deltaY: number, x: number, y: number): Promise<void> {
     const page = this.getActivePage();
     if (!page) return;
-    await page.mouse.move(x, y);
+    const p = this.toPageCoords(x, y);
+    this.syncX11Cursor(x, y);
+    await page.mouse.move(p.x, p.y);
     await page.mouse.wheel({ deltaX, deltaY });
   }
 

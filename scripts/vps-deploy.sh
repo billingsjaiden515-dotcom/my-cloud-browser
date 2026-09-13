@@ -11,7 +11,7 @@ echo "=== Cloud Browser VPS Deploy ==="
 echo "[1/6] Installing dependencies..."
 apt update && apt install -y \
   git curl \
-  chromium ffmpeg \
+  chromium ffmpeg xdotool \
   libnss3 libatk-bridge2.0-0 libdrm2 libxkbcommon0 \
   libxcomposite1 libxdamage1 libxrandr2 libgbm1 \
   libpango-1.0-0 libcairo2 libasound2 libatk1.0-0 \

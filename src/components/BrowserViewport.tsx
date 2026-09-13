@@ -37,12 +37,15 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
   const viewportRef = useRef<{ w: number; h: number }>({ w: 1280, h: 800 });
   // Track last requested viewport size to prevent resize loops
   const lastViewportRequestRef = useRef<{ w: number; h: number }>({ w: 1280, h: 800 });
-
   // Called when viewport actually changes (from setViewport response)
   const updateViewportRef = useCallback((w: number, h: number) => {
     viewportRef.current = { w, h };
   }, []);
 
+  // NOTE: Coordinate mapping deliberately maps to the CAPTURE/video frame (which in
+  // headful mode includes the browser chrome at the top). The server translates
+  // capture coords -> page viewport coords using its measured chrome offset, so we
+  // must NOT apply an offset here (it would double-compensate).
   const getRelativeCoords = useCallback((e: { clientX: number; clientY: number }): { x: number; y: number } => {
     const video = videoRef.current;
     if (!video) return { x: 0, y: 0 };
@@ -73,7 +76,7 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
     const scaleX = videoW / renderedW;
     const scaleY = videoH / renderedH;
 
-    // Clamp to valid viewport bounds (clicks in letterboxing bars get clamped to edge)
+    // Clamp to valid capture bounds (clicks in letterboxing bars get clamped to edge)
     return {
       x: Math.max(0, Math.min(videoW, Math.round((e.clientX - rect.left - offsetX) * scaleX))),
       y: Math.max(0, Math.min(videoH, Math.round((e.clientY - rect.top - offsetY) * scaleY))),
@@ -126,8 +129,13 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
     api.sendMouseDoubleClick(x, y, button);
   }, [isConnected, getRelativeCoords, api]);
 
+  const lastMouseMoveTime = useRef(0);
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (!isConnected) return;
+    // Throttle mouse moves to ~30fps to avoid overwhelming server with HTTP requests
+    const now = performance.now();
+    if (now - lastMouseMoveTime.current < 33) return;
+    lastMouseMoveTime.current = now;
     const { x, y } = getRelativeCoords(e);
     api.sendMouseMove(x, y);
   }, [isConnected, getRelativeCoords, api]);
@@ -208,7 +216,7 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
         autoPlay
         playsInline
         className="w-full h-full object-contain cursor-default select-none"
-        style={{ display: isConnected ? 'block' : 'none' }}
+        style={{ display: isConnected ? 'block' : 'none', cursor: isConnected ? 'none' : 'default' }}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
         onDoubleClick={handleDoubleClick}
