@@ -216,7 +216,7 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
         autoPlay
         playsInline
         className="w-full h-full object-contain cursor-default select-none"
-        style={{ display: isConnected ? 'block' : 'none', cursor: isConnected ? 'none' : 'default' }}
+        style={{ display: isConnected ? 'block' : 'none' }}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
         onDoubleClick={handleDoubleClick}

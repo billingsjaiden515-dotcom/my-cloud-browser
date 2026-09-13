@@ -41,7 +41,10 @@ export class BrowserSession {
   // coordinates are offset from capture coordinates by this amount.
   private browserChromeTop = 0;
   private readonly DEFAULT_CHROME_TOP = 80; // fallback if measurement fails
-  private lastX11SyncTime = 0;
+  // Parking spot for the X11 pointer: inside the 1920x1080 Xvfb display but
+  // OUTSIDE the 1280x800 x11grab capture region, so it never appears in the stream.
+  private readonly PARK_X = 1850;
+  private readonly PARK_Y = 1000;
 
   constructor(sessionId: string, browserType = 'chromium') {
     this.sessionId = sessionId;
@@ -218,6 +221,10 @@ export class BrowserSession {
 
     this.x11recvBuf = Buffer.alloc(0);
 
+    // Park the X11 pointer outside the captured region so it never appears in the
+    // stream (page hover/click state is driven by Puppeteer's virtual mouse).
+    this.parkX11Cursor();
+
     this.x11ffmpeg!.stdout!.on('data', (chunk: Buffer) => {
       this.x11recvBuf = Buffer.concat([this.x11recvBuf, chunk]);
       this.extractJpegFrames();
@@ -386,30 +393,64 @@ export class BrowserSession {
   }
 
   /**
-   * Move the real X11 cursor so it visibly tracks inside the captured stream
-   * (headful x11grab mode). Fire-and-forget; throttled to ~20 Hz.
+   * Park the X11 pointer off the captured region so it never shows in the stream.
+   * The page's hover state is driven by Puppeteer's virtual mouse, so the X11
+   * pointer position is irrelevant to page interaction.
    */
-  private syncX11Cursor(videoX: number, videoY: number): void {
+  private parkX11Cursor(): void {
     if (!process.env.DISPLAY) return;
-    const now = Date.now();
-    if (now - this.lastX11SyncTime < 50) return;
-    this.lastX11SyncTime = now;
     try {
-      const proc = spawn('xdotool', [
-        'mousemove',
-        String(Math.floor(videoX)),
-        String(Math.floor(videoY + this.browserChromeTop)),
-      ], { stdio: 'ignore' });
+      const proc = spawn('xdotool', ['mousemove', String(this.PARK_X), String(this.PARK_Y)], { stdio: 'ignore' });
       proc.on('error', () => { /* xdotool not installed */ });
       setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* done */ } }, 1500);
     } catch { /* xdotool unavailable */ }
   }
 
+  /**
+   * Send an X11-level click through xdotool. Used for clicks in the browser chrome
+   * region (tab strip / address bar), which Puppeteer can never reach because it
+   * can only dispatch events inside the page viewport.
+   */
+  private async x11Click(x: number, y: number, button: 'left' | 'right' | 'middle', opts?: { press?: boolean; release?: boolean; repeat?: number }): Promise<void> {
+    if (!process.env.DISPLAY) return;
+    const btn = button === 'left' ? '1' : button === 'middle' ? '2' : '3';
+    const args: string[] = ['mousemove', String(Math.floor(x)), String(Math.floor(y))];
+    if (opts?.press) {
+      args.push('mousedown', btn);
+    } else if (opts?.release) {
+      args.push('mouseup', btn);
+    } else if (opts?.repeat && opts.repeat > 1) {
+      args.push('click', '--repeat', String(opts.repeat), '--delay', '100', btn);
+    } else {
+      args.push('click', btn);
+    }
+    try {
+      const proc = spawn('xdotool', args, { stdio: 'ignore' });
+      proc.on('error', () => { /* xdotool not installed */ });
+      await new Promise<void>(res => {
+        proc.on('close', () => res());
+        setTimeout(res, 1500);
+      });
+    } catch { /* xdotool unavailable */ }
+    // Re-park the pointer so it doesn't linger in the visible chrome region.
+    this.parkX11Cursor();
+  }
+
+  /** True when a capture coordinate is inside the browser chrome (not the page). */
+  private isInChrome(y: number): boolean {
+    return !!process.env.DISPLAY && y < this.browserChromeTop;
+  }
+
   async sendMouseClick(x: number, y: number, button: 'left' | 'right' | 'middle' = 'left'): Promise<void> {
     const page = this.getActivePage();
     if (!page) return;
+    // Clicks in the browser chrome (tab strip / address bar) must go through
+    // xdotool — Puppeteer cannot reach UI outside the page viewport.
+    if (this.isInChrome(y)) {
+      await this.x11Click(x, y, button);
+      return;
+    }
     const p = this.toPageCoords(x, y);
-    this.syncX11Cursor(x, y);
     // Ensure page has focus before clicking
     await page.bringToFront().catch(() => {});
     await page.mouse.click(p.x, p.y, { button });
@@ -418,8 +459,11 @@ export class BrowserSession {
   async sendMouseDown(x: number, y: number, button: 'left' | 'right' | 'middle' = 'left'): Promise<void> {
     const page = this.getActivePage();
     if (!page) return;
+    if (this.isInChrome(y)) {
+      await this.x11Click(x, y, button, { press: true });
+      return;
+    }
     const p = this.toPageCoords(x, y);
-    this.syncX11Cursor(x, y);
     await page.bringToFront().catch(() => {});
     await page.mouse.move(p.x, p.y);
     await page.mouse.down({ button });
@@ -428,6 +472,10 @@ export class BrowserSession {
   async sendMouseUp(x: number, y: number, button: 'left' | 'right' | 'middle' = 'left'): Promise<void> {
     const page = this.getActivePage();
     if (!page) return;
+    if (this.isInChrome(y)) {
+      await this.x11Click(x, y, button, { release: true });
+      return;
+    }
     const p = this.toPageCoords(x, y);
     await page.mouse.move(p.x, p.y);
     await page.mouse.up({ button });
@@ -436,8 +484,11 @@ export class BrowserSession {
   async sendMouseDoubleClick(x: number, y: number, button: 'left' | 'right' | 'middle' = 'left'): Promise<void> {
     const page = this.getActivePage();
     if (!page) return;
+    if (this.isInChrome(y)) {
+      await this.x11Click(x, y, button, { repeat: 2 });
+      return;
+    }
     const p = this.toPageCoords(x, y);
-    this.syncX11Cursor(x, y);
     await page.bringToFront().catch(() => {});
     // Puppeteer's MouseClickOptions doesn't support clickCount in this version.
     // Simulate a double-click with two rapid clicks.
@@ -448,8 +499,10 @@ export class BrowserSession {
   async sendMouseMove(x: number, y: number): Promise<void> {
     const page = this.getActivePage();
     if (!page) return;
+    // Don't move/park the X11 pointer on every move (spams xdotool at 20Hz).
+    // page.mouse.move drives the page hover state; the X11 pointer stays parked
+    // off-capture so it never shows in the stream.
     const p = this.toPageCoords(x, y);
-    this.syncX11Cursor(x, y);
     // Fire-and-forget for mouse moves to reduce latency
     page.mouse.move(p.x, p.y).catch(() => {});
   }
@@ -458,7 +511,6 @@ export class BrowserSession {
     const page = this.getActivePage();
     if (!page) return;
     const p = this.toPageCoords(x, y);
-    this.syncX11Cursor(x, y);
     await page.mouse.move(p.x, p.y);
     await page.mouse.wheel({ deltaX, deltaY });
   }
@@ -467,7 +519,6 @@ export class BrowserSession {
     const page = this.getActivePage();
     if (!page) return;
     const p = this.toPageCoords(x, y);
-    this.syncX11Cursor(x, y);
     await page.mouse.move(p.x, p.y);
     await page.mouse.wheel({ deltaX, deltaY });
   }
