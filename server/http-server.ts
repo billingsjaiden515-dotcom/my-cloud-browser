@@ -88,7 +88,8 @@ export function createServer(): http.Server {
       const url = browser ? await browser.getCurrentUrl().catch(() => '') : '';
       const title = browser ? await browser.getTitle().catch(() => '') : '';
       const tabs = browser ? await browser.getTabs().catch(() => []) : [];
-      res.json({ sessionId, active: exists, url, title, tabs });
+      const geo = browser ? browser.getGeometry() : null;
+      res.json({ sessionId, active: exists, url, title, tabs, width: geo?.width, height: geo?.height });
     } else {
       const ids = sessionManager.getActiveSessionIds();
       res.json({ activeSessions: ids, count: ids.length });

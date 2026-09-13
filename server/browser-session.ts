@@ -41,8 +41,17 @@ export class BrowserSession {
   // coordinates are offset from capture coordinates by this amount.
   private browserChromeTop = 0;
   private readonly DEFAULT_CHROME_TOP = 80; // fallback if measurement fails
+  // Measured window geometry (Xvfb screen coords + size). The x11grab capture
+  // region is sized to the window so the video shows chrome + full page with
+  // no cut-off, and capture coords map 1:1 onto window coords.
+  private winX = 0;
+  private winY = 0;
+  private winW = VIEWPORT_WIDTH;
+  private winH = VIEWPORT_HEIGHT + 80;
+  // Chrome offset: how far the page viewport origin is from the capture origin.
+  private browserChromeLeft = 0;
   // Parking spot for the X11 pointer: inside the 1920x1080 Xvfb display but
-  // OUTSIDE the 1280x800 x11grab capture region, so it never appears in the stream.
+  // OUTSIDE the captured window region, so it never appears in the stream.
   private readonly PARK_X = 1850;
   private readonly PARK_Y = 1000;
 
@@ -117,14 +126,11 @@ export class BrowserSession {
     const page = pages[0] || (await this.browser.newPage());
     await this.setupPage(page);
 
-    // In headful mode, the page viewport is BELOW the browser chrome (tab strip +
-    // address bar), so capture coordinates are offset from page coordinates.
-    // Chromium's Linux tab-strip + omni consistent ~80px. Measurable on the VPS;
-    // overridable via CHROME_BROWSER_TOP env for fine-tuning.
+    // In headful mode, measure the real window geometry (window position + size,
+    // browser chrome offset) so capture coords map pixel-accurately to page coords.
+    // This is what fixes clicks like reCAPTCHA checkboxes near the top of the page.
     if (isHeadful) {
-      const envTop = process.env.CHROME_BROWSER_TOP;
-      this.browserChromeTop = envTop ? Math.max(0, parseInt(envTop, 10) || 0) : this.DEFAULT_CHROME_TOP;
-      console.log(`[BrowserSession] Browser chrome top offset: ${this.browserChromeTop}px (set CHROME_BROWSER_TOP to tune)`);
+      await this.measureChromeGeometry(page);
     }
 
     const tabId = this.getPageId(page);
@@ -200,8 +206,10 @@ export class BrowserSession {
    */
   private startX11Capture(): void {
     const display = process.env.DISPLAY || ':99';
-    const width = this.viewportWidth;
-    const height = this.viewportHeight;
+    // Capture exactly the browser window (chrome + full page) so the video has no
+    // cut-off and capture coords map 1:1 onto window coords. Measured at launch.
+    const width = this.winW;
+    const height = this.winH;
     const fps = this.TARGET_FPS;
 
     // Persistent FFmpeg process: x11grab -> raw BGR frames -> JPEG pipe
@@ -212,7 +220,7 @@ export class BrowserSession {
       '-f', 'x11grab',
       '-video_size', `${width}x${height}`,
       '-framerate', String(fps),
-      '-i', display,
+      '-i', `${display}+${this.winX},${this.winY}`,
       '-f', 'image2pipe',
       '-vcodec', 'mjpeg',
       '-q:v', String(Math.round((100 - this.JPEG_QUALITY) / 10)),
@@ -270,10 +278,10 @@ export class BrowserSession {
       // Remove processed data from buffer
       this.x11recvBuf = this.x11recvBuf.subarray(jpegEnd);
 
-      // Deliver frame
+      // Deliver frame (frame dims = window size so encoder/frontend size match)
       this.frameCounter++;
       if (this.frameCallback) {
-        this.frameCallback(frame, this.viewportWidth, this.viewportHeight);
+        this.frameCallback(frame, this.winW, this.winH);
       }
       if (this.frameCounter % 30 === 0) {
         console.log(`[BrowserSession] Captured ${this.frameCounter} frames (session ${this.sessionId})`);
@@ -377,18 +385,91 @@ export class BrowserSession {
     }, this.VIEWPORT_DEBOUNCE_MS);
   }
 
+  // ─── Window geometry ────────────────────────────────────────────────────────
+
+  /**
+   * Measure the real Chromium window geometry (position + size) and compute how
+   * far the page viewport origin sits from the capture origin (chrome offset).
+   * Uses xdotool window geometry; falls back to sensible defaults if unavailable.
+   */
+  private async measureChromeGeometry(page: Page): Promise<void> {
+    // Env override for chrome top always wins (manual fine-tuning).
+    const envTop = process.env.CHROME_BROWSER_TOP;
+    if (envTop) this.browserChromeTop = Math.max(0, parseInt(envTop, 10) || 0);
+
+    const vp = page.viewport() || { width: VIEWPORT_WIDTH, height: VIEWPORT_HEIGHT };
+    const vpW = vp.width || VIEWPORT_WIDTH;
+    const vpH = vp.height || VIEWPORT_HEIGHT;
+
+    for (const cls of ['chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable', 'Chromium', 'crx_']) {
+      const geo = await this.xdotoolWindowGeometry(cls);
+      if (!geo) continue;
+      this.winX = geo.X;
+      this.winY = geo.Y;
+      this.winW = Math.max(vpW, geo.WIDTH);
+      this.winH = Math.max(vpH, geo.HEIGHT);
+      // The page viewport bottom aligns with the window bottom (no bottom chrome),
+      // so chrome offset = window origin + window size - viewport size.
+      this.browserChromeTop = Math.max(0, this.winY + geo.HEIGHT - vpH);
+      this.browserChromeLeft = Math.max(0, this.winX + geo.WIDTH - vpW);
+      break;
+    }
+
+    // Clamp capture region to the Xvfb display (1920x1080).
+    this.winW = Math.min(this.winW, 1920);
+    this.winH = Math.min(this.winH, 1080);
+
+    console.log(
+      `[BrowserSession] Geometry: window ${this.winW}x${this.winH} at (${this.winX},${this.winY}) ` +
+      `chromeTop=${this.browserChromeTop}px chromeLeft=${this.browserChromeLeft}px (set CHROME_BROWSER_TOP to tune)`,
+    );
+  }
+
+  /** Query window geometry for a WM_CLASS via xdotool (best-effort). */
+  private async xdotoolWindowGeometry(cls: string): Promise<{ X: number; Y: number; WIDTH: number; HEIGHT: number } | null> {
+    return new Promise((resolve) => {
+      try {
+        const proc = spawn(
+          'xdotool',
+          ['search', '--onlyone', '--class', cls, 'getwindowgeometry', '--shell'],
+          { stdio: ['ignore', 'pipe', 'ignore'] },
+        );
+        let out = '';
+        proc.stdout?.on('data', (d: Buffer) => { out += d.toString(); });
+        proc.on('error', () => resolve(null));
+        proc.on('close', () => {
+          const pick = (k: string) => { const m = new RegExp(`${k}=(\d+)`).exec(out); return m ? parseInt(m[1], 10) : -1; };
+          const X = pick('X'), Y = pick('Y'), W = pick('WIDTH'), H = pick('HEIGHT');
+          resolve(X >= 0 && Y >= 0 && W > 0 && H > 0 ? { X, Y, WIDTH: W, HEIGHT: H } : null);
+        });
+        setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* done */ } resolve(null); }, 2000);
+      } catch {
+        resolve(null);
+      }
+    });
+  }
+
+  getGeometry(): { width: number; height: number; chromeTop: number; chromeLeft: number } {
+    return {
+      width: this.winW,
+      height: this.winH,
+      chromeTop: this.browserChromeTop,
+      chromeLeft: this.browserChromeLeft,
+    };
+  }
+
   // ─── Input methods ───────────────────────────────────────────────────────────
 
   /**
-   * Convert capture/video coordinates (which include browser chrome at the top in
-   * headful x11grab mode) into page viewport coordinates for Puppeteer.
+   * Convert capture/video coordinates into page viewport coordinates.
+   * The capture region equals the browser window (chrome + page, no cut-off),
+   * so the page origin is at (chromeLeft, chromeTop) within the capture —
+   * a direct translation, no rescaling needed.
    */
   private toPageCoords(x: number, y: number): { x: number; y: number } {
-    const capH = this.viewportHeight;
-    const usableH = Math.max(1, capH - this.browserChromeTop);
     return {
-      x: Math.max(0, Math.min(this.viewportWidth, Math.round(x))),
-      y: Math.max(0, Math.min(this.viewportHeight, Math.round((y - this.browserChromeTop) * (this.viewportHeight / usableH)))),
+      x: Math.max(0, Math.min(this.viewportWidth - 1, Math.round(x - this.browserChromeLeft))),
+      y: Math.max(0, Math.min(this.viewportHeight - 1, Math.round(y - this.browserChromeTop))),
     };
   }
 
@@ -414,7 +495,11 @@ export class BrowserSession {
   private async x11Click(x: number, y: number, button: 'left' | 'right' | 'middle', opts?: { press?: boolean; release?: boolean; repeat?: number }): Promise<void> {
     if (!process.env.DISPLAY) return;
     const btn = button === 'left' ? '1' : button === 'middle' ? '2' : '3';
-    const args: string[] = ['mousemove', String(Math.floor(x)), String(Math.floor(y))];
+    // xdotool works in screen coords; capture coords are window coords, so
+    // translate by the window origin.
+    const sx = Math.floor(this.winX + x);
+    const sy = Math.floor(this.winY + y);
+    const args: string[] = ['mousemove', String(sx), String(sy)];
     if (opts?.press) {
       args.push('mousedown', btn);
     } else if (opts?.release) {
@@ -437,8 +522,8 @@ export class BrowserSession {
   }
 
   /** True when a capture coordinate is inside the browser chrome (not the page). */
-  private isInChrome(y: number): boolean {
-    return !!process.env.DISPLAY && y < this.browserChromeTop;
+  private isInChrome(x: number, y: number): boolean {
+    return !!process.env.DISPLAY && (y < this.browserChromeTop || x < this.browserChromeLeft);
   }
 
   async sendMouseClick(x: number, y: number, button: 'left' | 'right' | 'middle' = 'left'): Promise<void> {
@@ -446,7 +531,7 @@ export class BrowserSession {
     if (!page) return;
     // Clicks in the browser chrome (tab strip / address bar) must go through
     // xdotool — Puppeteer cannot reach UI outside the page viewport.
-    if (this.isInChrome(y)) {
+    if (this.isInChrome(x, y)) {
       await this.x11Click(x, y, button);
       return;
     }
@@ -459,7 +544,7 @@ export class BrowserSession {
   async sendMouseDown(x: number, y: number, button: 'left' | 'right' | 'middle' = 'left'): Promise<void> {
     const page = this.getActivePage();
     if (!page) return;
-    if (this.isInChrome(y)) {
+    if (this.isInChrome(x, y)) {
       await this.x11Click(x, y, button, { press: true });
       return;
     }
@@ -472,7 +557,7 @@ export class BrowserSession {
   async sendMouseUp(x: number, y: number, button: 'left' | 'right' | 'middle' = 'left'): Promise<void> {
     const page = this.getActivePage();
     if (!page) return;
-    if (this.isInChrome(y)) {
+    if (this.isInChrome(x, y)) {
       await this.x11Click(x, y, button, { release: true });
       return;
     }
@@ -484,7 +569,7 @@ export class BrowserSession {
   async sendMouseDoubleClick(x: number, y: number, button: 'left' | 'right' | 'middle' = 'left'): Promise<void> {
     const page = this.getActivePage();
     if (!page) return;
-    if (this.isInChrome(y)) {
+    if (this.isInChrome(x, y)) {
       await this.x11Click(x, y, button, { repeat: 2 });
       return;
     }

@@ -51,10 +51,11 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
     if (!video) return { x: 0, y: 0 };
 
     const rect = video.getBoundingClientRect();
-    // Use tracked viewport dimensions instead of video.videoWidth/videoHeight
-    // WebRTC streams may report 0 for these properties
-    const videoW = viewportRef.current.w;
-    const videoH = viewportRef.current.h;
+    // Use the server-reported capture dimensions (window size incl. browser
+    // chrome). fall back to the tracked viewport size. WebRTC streams report
+    // video.videoWidth/videoHeight as 0, so we can't use those.
+    const videoW = api.geometry?.width ?? viewportRef.current.w;
+    const videoH = api.geometry?.height ?? viewportRef.current.h;
 
     // Account for object-contain letterboxing
     const videoAspect = videoW / videoH;
@@ -81,7 +82,7 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
       x: Math.max(0, Math.min(videoW, Math.round((e.clientX - rect.left - offsetX) * scaleX))),
       y: Math.max(0, Math.min(videoH, Math.round((e.clientY - rect.top - offsetY) * scaleY))),
     };
-  }, [videoRef]);
+  }, [videoRef, api.geometry]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (!isConnected) return;

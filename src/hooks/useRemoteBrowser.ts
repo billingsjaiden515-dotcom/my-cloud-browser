@@ -27,6 +27,7 @@ export interface RemoteBrowserApi {
   tabs: TabInfo[];
   activeTabId: string | null;
   availableBrowsers: BrowserInfo[];
+  geometry: { width: number; height: number } | null;
 
   start: (browserType?: string) => Promise<void>;
   stop: () => Promise<void>;
@@ -62,6 +63,9 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
   const [tabs, setTabs] = useState<TabInfo[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [availableBrowsers, setAvailableBrowsers] = useState<BrowserInfo[]>([]);
+  // Actual capture/video dimensions (window size incl. browser chrome), reported
+  // by the server. Used for client->video coordinate mapping.
+  const [geometry, setGeometry] = useState<{ width: number; height: number } | null>(null);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -92,6 +96,7 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
         if (d.url !== undefined) setCurrentUrl(d.url);
         if (d.title !== undefined) setCurrentTitle(d.title);
         if (d.tabs !== undefined) setTabs(d.tabs);
+        if (d.width && d.height) setGeometry({ width: d.width, height: d.height });
         const tabR = await fetch(`${API_BASE}/api/tab/list?sessionId=${sid}`);
         if (tabR.ok) {
           const td = await tabR.json();
@@ -447,6 +452,7 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
     tabs,
     activeTabId,
     availableBrowsers,
+    geometry,
     start,
     stop,
     navigate,
