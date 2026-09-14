@@ -48,6 +48,11 @@ export class BrowserSession {
   private winY = 0;
   private winW = VIEWPORT_WIDTH;
   private winH = VIEWPORT_HEIGHT + 80;
+  // Track where the current mouse press was dispatched (x11 chrome vs CDP page).
+  // A drag can START in one region and END in the other; the release must be
+  // routed to the SAME backend the press went to, or Puppeteer's virtual mouse
+  // state desyncs ("'left' is already pressed" / "'left' is not pressed").
+  private mousePress: { button: 'left' | 'right' | 'middle'; backend: 'x11' | 'page' } | null = null;
   // Chrome offset: how far the page viewport origin is from the capture origin
   // inside the capture region itself (direct, no rescaling needed).
   // NOTE: a WRONG chrome value shifts ALL page Y coords by the error amount.
@@ -547,6 +552,19 @@ export class BrowserSession {
     return !!process.env.DISPLAY && (y < this.browserChromeTop || x < this.browserChromeLeft);
   }
 
+  /**
+   * Swallow ONLY Puppeteer's button-state desync errors so a stray duplicate
+   * event can't 500 the whole click. Any other error is rethrown.
+   */
+  private warnIfButtonStateError(e: unknown, action: string): void {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/already pressed|not pressed/i.test(msg)) {
+      console.warn(`[Input] ${action} ignored (button-state desync): ${msg}`);
+      return;
+    }
+    throw e;
+  }
+
   async sendMouseClick(x: number, y: number, button: 'left' | 'right' | 'middle' = 'left'): Promise<void> {
     const page = this.getActivePage();
     if (!page) { console.warn(`[Input] click(${x},${y}) ignored: no active page`); return; }
@@ -561,32 +579,52 @@ export class BrowserSession {
     console.log(`[Input] click(${x},${y}) ${button} -> page(${p.x},${p.y})`);
     // Ensure page has focus before clicking
     await page.bringToFront().catch(() => {});
-    await page.mouse.click(p.x, p.y, { button });
+    try {
+      await page.mouse.click(p.x, p.y, { button });
+    } catch (e) {
+      this.warnIfButtonStateError(e, 'mouse.click');
+    }
   }
 
   async sendMouseDown(x: number, y: number, button: 'left' | 'right' | 'middle' = 'left'): Promise<void> {
     const page = this.getActivePage();
     if (!page) return;
-    if (this.isInChrome(x, y)) {
+    const chrome = this.isInChrome(x, y);
+    // Remember which backend the press went to so the matching release is
+    // routed to the same one even if the drag crosses the chrome/page boundary.
+    this.mousePress = { button, backend: chrome ? 'x11' : 'page' };
+    if (chrome) {
       await this.x11Click(x, y, button, { press: true });
       return;
     }
     const p = this.toPageCoords(x, y);
     await page.bringToFront().catch(() => {});
     await page.mouse.move(p.x, p.y);
-    await page.mouse.down({ button });
+    try {
+      await page.mouse.down({ button });
+    } catch (e) {
+      this.warnIfButtonStateError(e, 'mouse.down');
+    }
   }
 
   async sendMouseUp(x: number, y: number, button: 'left' | 'right' | 'middle' = 'left'): Promise<void> {
     const page = this.getActivePage();
+    // Route the release to the backend the press actually went to (fall back to
+    // coordinate-based routing when no press is tracked).
+    const backend = this.mousePress?.backend ?? (this.isInChrome(x, y) ? 'x11' : 'page');
+    this.mousePress = null;
     if (!page) return;
-    if (this.isInChrome(x, y)) {
+    if (backend === 'x11') {
       await this.x11Click(x, y, button, { release: true });
       return;
     }
     const p = this.toPageCoords(x, y);
     await page.mouse.move(p.x, p.y);
-    await page.mouse.up({ button });
+    try {
+      await page.mouse.up({ button });
+    } catch (e) {
+      this.warnIfButtonStateError(e, 'mouse.up');
+    }
   }
 
   async sendMouseDoubleClick(x: number, y: number, button: 'left' | 'right' | 'middle' = 'left'): Promise<void> {
@@ -600,8 +638,13 @@ export class BrowserSession {
     await page.bringToFront().catch(() => {});
     // Puppeteer's MouseClickOptions doesn't support clickCount in this version.
     // Simulate a double-click with two rapid clicks.
-    await page.mouse.click(p.x, p.y, { button });
-    await page.mouse.click(p.x, p.y, { button });
+    for (let i = 0; i < 2; i++) {
+      try {
+        await page.mouse.click(p.x, p.y, { button });
+      } catch (e) {
+        this.warnIfButtonStateError(e, 'mouse.dblclick');
+      }
+    }
   }
 
   async sendMouseMove(x: number, y: number): Promise<void> {
@@ -663,6 +706,7 @@ export class BrowserSession {
    * Called on client disconnect to prevent stuck input state.
    */
   async releaseInputState(): Promise<void> {
+    this.mousePress = null;
     const page = this.getActivePage();
     if (!page) return;
     try {

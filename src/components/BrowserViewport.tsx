@@ -120,6 +120,10 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
     containerRef.current?.focus();
     const { x, y } = getRelativeCoords(e);
     const button = e.button === 2 ? 'right' : e.button === 1 ? 'middle' : 'left';
+    // Guard: ignore a repeat press of the SAME button while it's already held
+    // (synthetic repeats / double-fire) — a second down would desync the
+    // server's virtual mouse ("'left' is already pressed").
+    if (dragRef.current?.button === button) return;
     dragRef.current = { button };
     api.sendMouseDown(x, y, button);
     // Attach window-level listeners for reliable drag tracking outside video bounds
