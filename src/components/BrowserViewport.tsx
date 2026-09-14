@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RemoteBrowserApi, ConnectionState } from '@/hooks/useRemoteBrowser';
 
 interface BrowserViewportProps {
@@ -41,6 +41,36 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
   const updateViewportRef = useCallback((w: number, h: number) => {
     viewportRef.current = { w, h };
   }, []);
+
+  // Size the video box to EXACTLY match the live capture resolution reported by
+  // the server (api.geometry, polled from /api/session/status). Without this the
+  // browser letterboxes the stream inside whatever container shape it gets,
+  // painting black bars on the sides whenever the aspects differ.
+  const [fitSize, setFitSize] = useState<{ w: number; h: number } | null>(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const compute = () => {
+      const geom = api.geometry ?? { width: 1280, height: 800 };
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
+      // Scale the capture resolution to fit inside the container, preserving
+      // its aspect ratio exactly.
+      const scale = Math.min(rect.width / geom.width, rect.height / geom.height);
+      const w = Math.floor(geom.width * scale);
+      const h = Math.floor(geom.height * scale);
+      setFitSize(prev => (prev && prev.w === w && prev.h === h ? prev : { w, h }));
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    ro.observe(el);
+    window.addEventListener('resize', compute);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', compute);
+    };
+  }, [api.geometry]);
 
   // NOTE: Coordinate mapping deliberately maps to the CAPTURE/video frame (which in
   // headful mode includes the browser chrome at the top). The server translates
@@ -207,7 +237,7 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-full bg-gray-950 outline-none"
+      className="relative w-full h-full bg-gray-950 outline-none flex items-center justify-center"
       tabIndex={0}
       onKeyDown={handleKeyDown}
       onKeyUp={handleKeyUp}
@@ -216,8 +246,16 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
         ref={videoRef}
         autoPlay
         playsInline
-        className="w-full h-full object-contain cursor-default select-none"
-        style={{ display: isConnected ? 'block' : 'none' }}
+        className="cursor-default select-none"
+        style={{
+          display: isConnected ? 'block' : 'none',
+          // Exact fitted dimensions from live geometry — the video box always
+          // matches the streamed aspect ratio, so no letterbox bars and no
+          // distortion. Falls back to old contain behavior until first compute.
+          width: fitSize ? `${fitSize.w}px` : '100%',
+          height: fitSize ? `${fitSize.h}px` : '100%',
+          objectFit: fitSize ? 'fill' : 'contain',
+        }}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
         onDoubleClick={handleDoubleClick}
