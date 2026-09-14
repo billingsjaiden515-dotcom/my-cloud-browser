@@ -231,7 +231,8 @@ export function createServer(): http.Server {
       await browser.setViewport(width, height);
       res.json({ ok: true, width, height });
     } catch (e) {
-      res.status(500).json({ error: 'viewport_failed', message: e instanceof Error ? e.message : 'Unknown' });
+      console.error('[HTTP] /api/viewport failed:', e);
+      res.status(500).json({ error: 'viewport_failed', message: e instanceof Error ? e.message : String(e) });
     }
   });
 
@@ -258,7 +259,8 @@ export function createServer(): http.Server {
       }
       res.json({ ok: true });
     } catch (e) {
-      res.status(500).json({ error: 'input_failed', message: e instanceof Error ? e.message : 'Unknown' });
+      console.error('[HTTP] /api/input/mouse failed:', e);
+      res.status(500).json({ error: 'input_failed', message: e instanceof Error ? e.message : String(e) });
     }
   });
 
@@ -279,7 +281,8 @@ export function createServer(): http.Server {
       }
       res.json({ ok: true });
     } catch (e) {
-      res.status(500).json({ error: 'input_failed', message: e instanceof Error ? e.message : 'Unknown' });
+      console.error('[HTTP] /api/input/keyboard failed:', e);
+      res.status(500).json({ error: 'input_failed', message: e instanceof Error ? e.message : String(e) });
     }
   });
 
