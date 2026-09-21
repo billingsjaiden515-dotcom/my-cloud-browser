@@ -105,6 +105,11 @@ export class BrowserSession {
     this.browser = await puppeteer.launch({
       executablePath,
       headless: isHeadful ? false : true,
+      // Critical: without this, Puppeteer applies its default 800x600 CDP
+      // device-metrics override, and window.innerWidth/innerHeight report the
+      // EMULATED size instead of the real window's content area — which broke
+      // measureChromeGeometry()'s chrome-offset math (chromeTop=280).
+      defaultViewport: null,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -136,13 +141,6 @@ export class BrowserSession {
     const page = pages[0] || (await this.browser.newPage());
     await this.setupPage(page);
 
-    // In headful mode, measure the real window geometry (window position + size,
-    // browser chrome offset) so capture coords map pixel-accurately to page coords.
-    // This is what fixes clicks like reCAPTCHA checkboxes near the top of the page.
-    if (isHeadful) {
-      await this.measureChromeGeometry(page);
-    }
-
     const tabId = this.getPageId(page);
     this.pages.set(tabId, page);
     this.activePageId = tabId;
@@ -153,6 +151,14 @@ export class BrowserSession {
     }).catch(() => {
       return page.goto('about:blank').catch(() => {});
     });
+
+    // In headful mode, measure the real window geometry AFTER the initial
+    // navigation completes. Measuring before goto() captured about:blank's
+    // default 800x600 geometry instead of the real loaded page's content area
+    // (the inner raw log's url field proved this: url was "about:blank").
+    if (isHeadful) {
+      await this.measureChromeGeometry(page);
+    }
 
     console.log(`[BrowserSession] Browser launched, session: ${this.sessionId}`);
   }
