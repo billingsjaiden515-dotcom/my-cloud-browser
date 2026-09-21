@@ -93,15 +93,23 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
         const r = await fetch(`${API_BASE}/api/session/status?sessionId=${sid}`);
         if (!r.ok) return;
         const d = await r.json();
-        if (d.url !== undefined) setCurrentUrl(d.url);
-        if (d.title !== undefined) setCurrentTitle(d.title);
-        if (d.tabs !== undefined) setTabs(d.tabs);
-        if (d.width && d.height) setGeometry({ width: d.width, height: d.height });
+        if (d.url !== undefined) setCurrentUrl(prev => (prev === d.url ? prev : d.url));
+        if (d.title !== undefined) setCurrentTitle(prev => (prev === d.title ? prev : d.title));
+        // Only update when values actually changed — a new object identity
+        // every poll forces constant re-renders of the whole viewport tree
+        // (flicker) and re-fires every geometry-dependent effect.
+        if (d.width && d.height) {
+          setGeometry(prev => (prev && prev.width === d.width && prev.height === d.height ? prev : { width: d.width, height: d.height }));
+        }
         const tabR = await fetch(`${API_BASE}/api/tab/list?sessionId=${sid}`);
         if (tabR.ok) {
           const td = await tabR.json();
-          setTabs(td.tabs || []);
-          setActiveTabId(td.activeTabId || null);
+          setTabs(prev => {
+            const next = td.tabs || [];
+            const same = prev.length === next.length && prev.every((t, i) => t.id === next[i]?.id && t.title === next[i]?.title && t.url === next[i]?.url && t.loading === next[i]?.loading);
+            return same ? prev : next;
+          });
+          setActiveTabId(prev => (prev === (td.activeTabId || null) ? prev : (td.activeTabId || null)));
         }
       } catch { /* ignore */ }
     };

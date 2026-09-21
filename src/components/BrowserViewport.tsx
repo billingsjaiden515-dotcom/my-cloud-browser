@@ -51,36 +51,10 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
   // bottom/right page overflow; the chrome (tab strip) is anchored at the top
   // and is never cropped. getRelativeCoords() below mirrors cover math
   // (max-scale, top-left anchored) so clicks stay 1:1 with the stream.
-
-  // Size the video box to EXACTLY match the live capture resolution reported by
-  // the server (api.geometry, polled from /api/session/status). Without this the
-  // browser letterboxes the stream inside whatever container shape it gets,
-  // painting black bars on the sides whenever the aspects differ.
-  const [fitSize, setFitSize] = useState<{ w: number; h: number } | null>(null);
-
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const compute = () => {
-      const geom = api.geometry ?? { width: 1280, height: 800 };
-      const rect = el.getBoundingClientRect();
-      if (rect.width === 0 || rect.height === 0) return;
-      // Scale the capture resolution to fit inside the container, preserving
-      // its aspect ratio exactly.
-      const scale = Math.min(rect.width / geom.width, rect.height / geom.height);
-      const w = Math.floor(geom.width * scale);
-      const h = Math.floor(geom.height * scale);
-      setFitSize(prev => (prev && prev.w === w && prev.h === h ? prev : { w, h }));
-    };
-    compute();
-    const ro = new ResizeObserver(compute);
-    ro.observe(el);
-    window.addEventListener('resize', compute);
-    return () => {
-      ro.disconnect();
-      window.removeEventListener('resize', compute);
-    };
-  }, [api.geometry]);
+  // NOTE: no ResizeObserver / fitSize state here on purpose — sizing is pure
+  // CSS (100%/cover) and never triggers React re-renders. A previous
+  // ResizeObserver-based fit box caused constant re-renders (flicker) and
+  // still couldn't fill the container.
 
   // NOTE: Coordinate mapping deliberately maps to the CAPTURE/video frame (which in
   // headful mode includes the browser chrome at the top). The server translates

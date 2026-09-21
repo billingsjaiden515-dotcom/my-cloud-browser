@@ -34,10 +34,14 @@ export default function App() {
   const isConnecting = connectionState === 'connecting';
   const isBusy = isConnecting;
 
-  // Sync URL input with current URL
+  // Sync URL input with current URL, but NEVER while the user is editing the
+  // input (focused) — overwriting a focused input's value mid-edit both eats
+  // keystrokes and re-triggers the select-on-focus highlight.
   useEffect(() => {
     if (currentUrl && currentUrl !== 'about:blank') {
-      setUrlInput(currentUrl);
+      const input = document.activeElement;
+      const editing = input instanceof HTMLInputElement && input.type === 'text';
+      if (!editing) setUrlInput(currentUrl);
     }
   }, [currentUrl]);
 
@@ -160,7 +164,16 @@ export default function App() {
                   disabled={!isConnected}
                   className="flex-1 min-w-0 bg-transparent text-sm outline-none"
                   style={{ color: 'var(--text)' }}
-                  onFocus={e => e.target.select()}
+                  onFocus={e => {
+                    // Select all only on genuine user focus (mouse click /
+                    // tab into). Programmatic focus during re-renders must
+                    // NOT re-select, or the bar looks stuck highlighted.
+                    if (e.target !== document.activeElement) {
+                      e.target.select();
+                    } else {
+                      requestAnimationFrame(() => e.target.select());
+                    }
+                  }}
                 />
               </div>
             </form>
