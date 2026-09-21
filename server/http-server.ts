@@ -114,12 +114,18 @@ export function createServer(): http.Server {
   app.post('/api/navigate', async (req, res) => {
     try {
       const { sessionId, url } = req.body as { sessionId: string; url: string };
+      console.log(`[HTTP] /api/navigate session=${sessionId} url="${url}"`);
       const browser = sessionManager.getBrowser(sessionId);
-      if (!browser) { res.status(404).json({ error: 'session_not_found' }); return; }
+      if (!browser) {
+        console.warn(`[HTTP] /api/navigate session_not_found: ${sessionId}`);
+        res.status(404).json({ error: 'session_not_found' }); return;
+      }
       await browser.navigate(url);
       const currentUrl = await browser.getCurrentUrl();
+      console.log(`[HTTP] /api/navigate ok -> ${currentUrl}`);
       res.json({ ok: true, url: currentUrl });
     } catch (e) {
+      console.error('[HTTP] /api/navigate failed:', e);
       res.status(500).json({ error: 'navigate_failed', message: e instanceof Error ? e.message : 'Unknown' });
     }
   });

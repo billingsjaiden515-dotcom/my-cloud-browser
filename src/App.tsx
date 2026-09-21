@@ -93,8 +93,13 @@ export default function App() {
 
   const handleNavigate = useCallback((e: React.FormEvent) => {
     e.preventDefault();
-    if (!urlInput.trim() || !isConnected) return;
-    api.navigate(urlInput.trim());
+    const url = urlInput.trim();
+    if (!url || !isConnected) {
+      console.log(`[UI] Navigate blocked: url="${url}" connected=${isConnected}`);
+      return;
+    }
+    console.log(`[UI] Navigate submit: ${url}`);
+    api.navigate(url);
   }, [api, urlInput, isConnected]);
 
   // Browser logo component - supports SVG and PNG icons

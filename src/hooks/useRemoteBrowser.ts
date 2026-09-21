@@ -354,7 +354,7 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
 
   const post = useCallback(async (path: string, body: Record<string, unknown>): Promise<unknown> => {
     const sid = sessionIdRef.current;
-    if (!sid) return;
+    if (!sid) { console.warn(`[Client] ${path} skipped: no sessionId`); return; }
     try {
       const r = await fetch(`${API_BASE}${path}`, {
         method: 'POST',
@@ -367,7 +367,13 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
         if (data.url) setCurrentUrl(data.url);
         return data;
       }
-    } catch { /* ignore */ }
+      // Surface non-OK responses — previously swallowed silently, which made
+      // intermittent navigation failures impossible to diagnose.
+      const errBody = await r.text().catch(() => '');
+      console.warn(`[Client] ${path} failed: HTTP ${r.status} ${errBody}`);
+    } catch (e) {
+      console.warn(`[Client] ${path} threw:`, e);
+    }
   }, []);
 
   // ─── Navigation ──────────────────────────────────────────────────────────────
