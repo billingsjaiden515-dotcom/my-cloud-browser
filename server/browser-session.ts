@@ -473,14 +473,30 @@ export class BrowserSession {
         proc.on('error', () => resolve(null));
         proc.on('close', () => {
           const windowIds = ids.split('\n').map(s => s.trim()).filter(s => /^\d+$/.test(s));
+          console.log(`[Geometry] class="${cls}" window IDs: [${windowIds.join(', ')}]`);
           if (windowIds.length === 0) { resolve(null); return; }
 
-          // Measure each window and keep the largest that meets the minimum.
-          let best: { X: number; Y: number; WIDTH: number; HEIGHT: number } | null = null;
+          // Measure each window; keep results for ALL of them (eligible or not)
+          // so the debug log shows exactly what the selection logic saw.
+          const results: { id: string; X: number; Y: number; WIDTH: number; HEIGHT: number }[] = [];
           let remaining = windowIds.length;
           let settled = false;
           const finish = () => {
-            if (!settled) { settled = true; resolve(best); }
+            if (settled) return;
+            settled = true;
+            const eligible = results.filter(r => r.WIDTH >= MIN_W && r.HEIGHT >= MIN_H);
+            eligible.sort((a, b) => b.WIDTH * b.HEIGHT - a.WIDTH * a.HEIGHT);
+            const selected = eligible[0] ?? null;
+            console.log(
+              '[Geometry] Candidates:',
+              results.length
+                ? results.map(r => `${r.id}: ${r.WIDTH}x${r.HEIGHT} @(${r.X},${r.Y})${eligible.includes(r) ? '' : ' [below min]'}`).join('  |  ')
+                : 'none measured',
+            );
+            console.log(
+              `[Geometry] Selected: ${selected ? `${selected.id} ${selected.WIDTH}x${selected.HEIGHT} @(${selected.X},${selected.Y})` : 'NONE met minimum size'}`,
+            );
+            resolve(selected ? { X: selected.X, Y: selected.Y, WIDTH: selected.WIDTH, HEIGHT: selected.HEIGHT } : null);
           };
           for (const id of windowIds) {
             const g = spawn(
@@ -493,9 +509,7 @@ export class BrowserSession {
             const onDone = () => {
               const pick = (k: string) => { const m = new RegExp(`${k}=(\d+)`).exec(out); return m ? parseInt(m[1], 10) : -1; };
               const X = pick('X'), Y = pick('Y'), W = pick('WIDTH'), H = pick('HEIGHT');
-              if (X >= 0 && Y >= 0 && W >= MIN_W && H >= MIN_H) {
-                if (!best || W * H > best.WIDTH * best.HEIGHT) best = { X, Y, WIDTH: W, HEIGHT: H };
-              }
+              results.push({ id, X, Y, WIDTH: W, HEIGHT: H });
               remaining -= 1;
               if (remaining === 0) finish();
             };
