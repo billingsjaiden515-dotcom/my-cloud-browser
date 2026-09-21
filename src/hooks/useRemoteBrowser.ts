@@ -86,13 +86,38 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
     }
   }, []);
 
-  // Poll for URL/title/tabs changes
+  // Poll for URL/title/tabs changes. Exactly ONE loop may run at a time.
+  // History: startPolling() used to overwrite pollTimerRef without clearing
+  // the previous interval, and start() never called stopPolling() — so every
+  // session started without a clean stop leaked a loop that kept 404ing the
+  // dead session forever (observed: 5+ concurrent stale loops). Fixed by:
+  // clearing on start/stop/unmount, PLUS self-healing when the server
+  // reports the session gone.
+  const pollSessionRef = useRef<string | null>(null);
+  const clearPollLoop = useCallback((reason: string) => {
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      console.log(`[Poll] Cleared for session ${pollSessionRef.current ?? '?'} (${reason})`);
+      pollTimerRef.current = null;
+      pollSessionRef.current = null;
+    }
+  }, []);
+
   const startPolling = useCallback((sid: string) => {
+    // Guard: never leave an old loop running when a new one starts.
+    clearPollLoop('replaced by new session');
+    pollSessionRef.current = sid;
     const poll = async () => {
       try {
         const r = await fetch(`${API_BASE}/api/session/status?sessionId=${sid}`);
         if (!r.ok) return;
         const d = await r.json();
+        if (d.active === false) {
+          // Server no longer knows this session (e.g. orphaned by a newer
+          // start) — self-heal instead of 404ing forever.
+          clearPollLoop('status active=false');
+          return;
+        }
         if (d.url !== undefined) setCurrentUrl(prev => (prev === d.url ? prev : d.url));
         if (d.title !== undefined) setCurrentTitle(prev => (prev === d.title ? prev : d.title));
         // Only update when values actually changed — a new object identity
@@ -102,6 +127,11 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
           setGeometry(prev => (prev && prev.width === d.width && prev.height === d.height ? prev : { width: d.width, height: d.height }));
         }
         const tabR = await fetch(`${API_BASE}/api/tab/list?sessionId=${sid}`);
+        if (tabR.status === 404) {
+          // Session gone server-side — stop the stale loop.
+          clearPollLoop('tab/list 404 — session gone server-side');
+          return;
+        }
         if (tabR.ok) {
           const td = await tabR.json();
           setTabs(prev => {
@@ -115,14 +145,12 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
     };
     poll();
     pollTimerRef.current = setInterval(poll, 1500);
-  }, []);
+    console.log(`[Poll] Started for session ${sid}`);
+  }, [clearPollLoop]);
 
   const stopPolling = useCallback(() => {
-    if (pollTimerRef.current) {
-      clearInterval(pollTimerRef.current);
-      pollTimerRef.current = null;
-    }
-  }, []);
+    clearPollLoop('stop');
+  }, [clearPollLoop]);
 
   const setupWebRTC = useCallback((sid: string, iceServers: RTCIceServer[]) => {
     const pc = new RTCPeerConnection({ iceServers });
@@ -183,6 +211,10 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
   }, [videoRef, sendSignal]);
 
   const start = useCallback(async (browserType = 'chromium') => {
+    // Audit-critical: clear any polling loop from a previous session BEFORE
+    // starting a new one — startPolling() alone can't be trusted for this
+    // when a prior session was never cleanly stopped.
+    stopPolling();
     setError(null);
     setConnectionState('connecting');
 
@@ -303,7 +335,7 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
       setError(e instanceof Error ? e.message : 'Failed to start browser session');
       setConnectionState('failed');
     }
-  }, [setupWebRTC, sendSignal, startPolling]);
+  }, [setupWebRTC, sendSignal, startPolling, stopPolling]);
 
   const stop = useCallback(async () => {
     stopPolling();
