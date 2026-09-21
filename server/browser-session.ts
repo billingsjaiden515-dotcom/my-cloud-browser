@@ -435,6 +435,8 @@ export class BrowserSession {
       const inner = await page.evaluate(() => ({
         w: window.innerWidth,
         h: window.innerHeight,
+        outerW: window.outerWidth,
+        outerH: window.outerHeight,
         dpr: window.devicePixelRatio,
         readyState: document.readyState,
         sinceNavMs: Math.round(performance.now()),
@@ -456,6 +458,19 @@ export class BrowserSession {
         console.log(
           `[BrowserSession] REAL geometry: window=${geo.WIDTH}x${geo.HEIGHT} ` +
           `innerPage=${inner.w}x${inner.h} chromeTop=${this.browserChromeTop} chromeLeft=${this.browserChromeLeft}`,
+        );
+        // Cross-check the chrome height against Chromium's OWN accounting:
+        // outerHeight - innerHeight. outerHeight includes the tab strip +
+        // omnibox AND the "Chrome is being controlled" infobar (~40px), so a
+        // value near 143 is plausibly EXACT — not a measurement error. If the
+        // two sources agree, geometry is correct and any residual in-page
+        // click misses live in the dispatch path, not in this number.
+        const chromeByChromium = inner.outerH - inner.h;
+        const chromeByXdotool = geo.HEIGHT - inner.h;
+        console.log(
+          `[Geometry] chrome cross-check: byXdotool=${chromeByXdotool}px vs ` +
+          `byChromiumOuterInner=${chromeByChromium}px (outer=${inner.outerH}) — ` +
+          `${chromeByXdotool === chromeByChromium ? 'MATCH, chromeTop is exact' : 'MISMATCH, investigate window bounds'}`,
         );
       }
       break;
