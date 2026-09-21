@@ -421,10 +421,25 @@ export class BrowserSession {
       this.winW = geo.WIDTH;
       this.winH = geo.HEIGHT;
 
-      // Measure the REAL physical page area inside the window. This is the
-      // only reliable source: the emulated viewport (page.viewport()) can be
-      // stale/soft — using it shifts every page click by the error amount.
-      const inner = await page.evaluate(() => ({ w: window.innerWidth, h: window.innerHeight })).catch(() => null);
+      // Measure the REAL physical page area inside the window. Raw measurement
+      // is logged first (value + emulation state + timing): the previous
+      // deploy measured 800x600, suspiciously Puppeteer's DEFAULT emulated
+      // viewport, so we must see WHAT is measured, on WHICH page, and WHEN
+      // relative to page load before trusting it.
+      const inner = await page.evaluate(() => ({
+        w: window.innerWidth,
+        h: window.innerHeight,
+        dpr: window.devicePixelRatio,
+        readyState: document.readyState,
+        sinceNavMs: Math.round(performance.now()),
+        url: location.href,
+      })).catch(() => null);
+      const emulated = page.viewport();
+      console.log(
+        `[Geometry] inner raw: ${inner ? JSON.stringify(inner) : 'EVALUATE_FAILED'} | ` +
+        `emulatedViewport=${emulated ? `${emulated.width}x${emulated.height}` : 'none'} | ` +
+        `capturedAt=${new Date().toISOString()}`,
+      );
       if (inner && inner.w > 0 && inner.h > 0) {
         // Page area is bottom-right aligned inside the window (no bottom chrome).
         // chrome offset = window size - page area.
