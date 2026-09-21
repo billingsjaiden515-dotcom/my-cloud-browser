@@ -507,8 +507,17 @@ export class BrowserSession {
             let out = '';
             g.stdout?.on('data', (d: Buffer) => { out += d.toString(); });
             const onDone = () => {
-              const pick = (k: string) => { const m = new RegExp(`${k}=(\d+)`).exec(out); return m ? parseInt(m[1], 10) : -1; };
-              const X = pick('X'), Y = pick('Y'), W = pick('WIDTH'), H = pick('HEIGHT');
+              // Parse xdotool's --shell output (KEY=value lines). The previous
+              // `new RegExp(`${k}=(\d+)`)` NEVER matched: `\d` inside a template
+              // literal collapses to `d`, producing patterns like `X=(d+)` that
+              // can't match `X=10` — every field parsed as -1 and geometry
+              // always fell back to defaults (chromeTop=0). Plain line parsing
+              // avoids the escaping trap entirely.
+              const parse = (k: string) => {
+                const line = out.split('\n').map(s => s.trim()).find(s => s.startsWith(`${k}=`));
+                return line ? parseInt(line.slice(k.length + 1).trim(), 10) : -1;
+              };
+              const X = parse('X'), Y = parse('Y'), W = parse('WIDTH'), H = parse('HEIGHT');
               results.push({ id, X, Y, WIDTH: W, HEIGHT: H });
               remaining -= 1;
               if (remaining === 0) finish();
