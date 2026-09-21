@@ -42,6 +42,16 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
     viewportRef.current = { w, h };
   }, []);
 
+  // Sizing: the video FILLS its container 100%x100% with object-fit 'cover'
+  // (top-left anchored). Rationale: an aspect-preserving "fit" box can never
+  // fill the container — any aspect mismatch between the container and the
+  // streamed capture (api.geometry) leaves the container's dark background
+  // visible around the video, which IS the "letterbox bars" users see. Cover
+  // scales uniformly (no distortion) to fill completely, cropping only the
+  // bottom/right page overflow; the chrome (tab strip) is anchored at the top
+  // and is never cropped. getRelativeCoords() below mirrors cover math
+  // (max-scale, top-left anchored) so clicks stay 1:1 with the stream.
+
   // Size the video box to EXACTLY match the live capture resolution reported by
   // the server (api.geometry, polled from /api/session/status). Without this the
   // browser letterboxes the stream inside whatever container shape it gets,
@@ -82,35 +92,20 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
 
     const rect = video.getBoundingClientRect();
     // Use the server-reported capture dimensions (window size incl. browser
-    // chrome). fall back to the tracked viewport size. WebRTC streams report
+    // chrome). Fall back to the tracked viewport size. WebRTC streams report
     // video.videoWidth/videoHeight as 0, so we can't use those.
     const videoW = api.geometry?.width ?? viewportRef.current.w;
     const videoH = api.geometry?.height ?? viewportRef.current.h;
 
-    // Account for object-contain letterboxing
-    const videoAspect = videoW / videoH;
-    const rectAspect = rect.width / rect.height;
+    // The video renders with object-fit: cover, top-left anchored: uniform
+    // max-scale to fill the container, cropping bottom/right overflow. Map
+    // client coords with the same max-scale and clamp into capture bounds
+    // (clicks on cropped-out regions clamp to the nearest visible edge).
+    const scale = Math.max(rect.width / videoW, rect.height / videoH);
 
-    let renderedW: number, renderedH: number, offsetX: number, offsetY: number;
-    if (videoAspect > rectAspect) {
-      renderedW = rect.width;
-      renderedH = rect.width / videoAspect;
-      offsetX = 0;
-      offsetY = (rect.height - renderedH) / 2;
-    } else {
-      renderedH = rect.height;
-      renderedW = rect.height * videoAspect;
-      offsetX = (rect.width - renderedW) / 2;
-      offsetY = 0;
-    }
-
-    const scaleX = videoW / renderedW;
-    const scaleY = videoH / renderedH;
-
-    // Clamp to valid capture bounds (clicks in letterboxing bars get clamped to edge)
     return {
-      x: Math.max(0, Math.min(videoW, Math.round((e.clientX - rect.left - offsetX) * scaleX))),
-      y: Math.max(0, Math.min(videoH, Math.round((e.clientY - rect.top - offsetY) * scaleY))),
+      x: Math.max(0, Math.min(videoW, Math.round((e.clientX - rect.left) / scale))),
+      y: Math.max(0, Math.min(videoH, Math.round((e.clientY - rect.top) / scale))),
     };
   }, [videoRef, api.geometry]);
 
@@ -253,12 +248,14 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
         className="cursor-default select-none"
         style={{
           display: isConnected ? 'block' : 'none',
-          // Exact fitted dimensions from live geometry — the video box always
-          // matches the streamed aspect ratio, so no letterbox bars and no
-          // distortion. Falls back to old contain behavior until first compute.
-          width: fitSize ? `${fitSize.w}px` : '100%',
-          height: fitSize ? `${fitSize.h}px` : '100%',
-          objectFit: fitSize ? 'fill' : 'contain',
+          // Fill the container completely — no letterbox bars. Uniform scale
+          // (no distortion); bottom/right page overflow is cropped, chrome is
+          // top-anchored and never cropped. See getRelativeCoords for matching
+          // click mapping.
+          width: '100%',
+          height: '100%',
+          objectFit: 'cover',
+          objectPosition: 'top left',
         }}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
