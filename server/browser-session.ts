@@ -455,18 +455,54 @@ export class BrowserSession {
   private async xdotoolWindowGeometry(cls: string): Promise<{ X: number; Y: number; WIDTH: number; HEIGHT: number } | null> {
     return new Promise((resolve) => {
       try {
+        // xdotool search --class matches MULTIPLE windows: the real browser
+        // window AND tiny helper/internal windows (e.g. 10x10). --onlyone
+        // blindly took the first match (a helper), so geometry was always
+        // 10x10 and chromeTop computed 0. Instead: list ALL matches, measure
+        // each, and pick the largest above a minimum size — the visible
+        // browser window is ~1280x880, helpers are tiny.
+        const MIN_W = 200;
+        const MIN_H = 200;
         const proc = spawn(
           'xdotool',
-          ['search', '--onlyone', '--class', cls, 'getwindowgeometry', '--shell'],
+          ['search', '--class', cls],
           { stdio: ['ignore', 'pipe', 'ignore'] },
         );
-        let out = '';
-        proc.stdout?.on('data', (d: Buffer) => { out += d.toString(); });
+        let ids = '';
+        proc.stdout?.on('data', (d: Buffer) => { ids += d.toString(); });
         proc.on('error', () => resolve(null));
         proc.on('close', () => {
-          const pick = (k: string) => { const m = new RegExp(`${k}=(\d+)`).exec(out); return m ? parseInt(m[1], 10) : -1; };
-          const X = pick('X'), Y = pick('Y'), W = pick('WIDTH'), H = pick('HEIGHT');
-          resolve(X >= 0 && Y >= 0 && W > 0 && H > 0 ? { X, Y, WIDTH: W, HEIGHT: H } : null);
+          const windowIds = ids.split('\n').map(s => s.trim()).filter(s => /^\d+$/.test(s));
+          if (windowIds.length === 0) { resolve(null); return; }
+
+          // Measure each window and keep the largest that meets the minimum.
+          let best: { X: number; Y: number; WIDTH: number; HEIGHT: number } | null = null;
+          let remaining = windowIds.length;
+          let settled = false;
+          const finish = () => {
+            if (!settled) { settled = true; resolve(best); }
+          };
+          for (const id of windowIds) {
+            const g = spawn(
+              'xdotool',
+              ['getwindowgeometry', '--shell', id],
+              { stdio: ['ignore', 'pipe', 'ignore'] },
+            );
+            let out = '';
+            g.stdout?.on('data', (d: Buffer) => { out += d.toString(); });
+            const onDone = () => {
+              const pick = (k: string) => { const m = new RegExp(`${k}=(\d+)`).exec(out); return m ? parseInt(m[1], 10) : -1; };
+              const X = pick('X'), Y = pick('Y'), W = pick('WIDTH'), H = pick('HEIGHT');
+              if (X >= 0 && Y >= 0 && W >= MIN_W && H >= MIN_H) {
+                if (!best || W * H > best.WIDTH * best.HEIGHT) best = { X, Y, WIDTH: W, HEIGHT: H };
+              }
+              remaining -= 1;
+              if (remaining === 0) finish();
+            };
+            g.on('error', () => { remaining -= 1; if (remaining === 0) finish(); });
+            g.on('close', onDone);
+          }
+          setTimeout(finish, 3000);
         });
         setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* done */ } resolve(null); }, 2000);
       } catch {
