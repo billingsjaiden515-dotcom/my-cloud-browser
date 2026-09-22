@@ -21,9 +21,15 @@ if command -v pulseaudio >/dev/null 2>&1; then
     --log-target=stderr >/tmp/pulseaudio.log 2>&1 || true
   sleep 1
   if command -v pactl >/dev/null 2>&1; then
-    pactl load-module module-null-sink sink_name=cloud_sink \
-      sink_properties=device.description=CloudBrowserSink >/dev/null 2>&1 || true
+    # Idempotent: creating the sink twice leaks sinks and orphans Chromium audio.
+    if ! pactl list short sinks 2>/dev/null | grep -q "[[:space:]]cloud_sink[[:space:]]"; then
+      pactl load-module module-null-sink sink_name=cloud_sink \
+        sink_properties=device.description=CloudBrowserSink >/dev/null 2>&1 || true
+    fi
+    pactl set-default-sink cloud_sink >/dev/null 2>&1 || true
+    pactl set-default-source cloud_sink.monitor >/dev/null 2>&1 || true
   fi
+  export PULSE_CAPTURE_SOURCE=cloud_sink.monitor
 else
   echo "[dev] PulseAudio not found - audio capture will be unavailable (video still works)"
 fi

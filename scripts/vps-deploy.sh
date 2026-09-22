@@ -11,7 +11,7 @@ echo "=== Cloud Browser VPS Deploy ==="
 echo "[1/6] Installing dependencies..."
 apt update && apt install -y \
   git curl \
-  chromium ffmpeg xdotool \
+  chromium ffmpeg xdotool pulseaudio pulseaudio-utils \
   libnss3 libatk-bridge2.0-0 libdrm2 libxkbcommon0 \
   libxcomposite1 libxdamage1 libxrandr2 libgbm1 \
   libpango-1.0-0 libcairo2 libasound2 libatk1.0-0 \
@@ -66,6 +66,24 @@ if ! xdpyinfo -display :99 >/dev/null 2>&1; then
   exit 1
 fi
 echo "Xvfb started on :99"
+
+# Start PulseAudio with an idempotent virtual null sink so headful Chromium has
+# an audio output device, and point FFmpeg at that sink's monitor.
+echo "Configuring PulseAudio virtual sink..."
+if ! pgrep -x pulseaudio >/dev/null 2>&1; then
+  pulseaudio --start --exit-idle-time=-1 --log-target=stderr >/tmp/pulseaudio.log 2>&1 || true
+  sleep 1
+fi
+if command -v pactl >/dev/null 2>&1; then
+  if ! pactl list short sinks 2>/dev/null | grep -q "[[:space:]]cloud_sink[[:space:]]"; then
+    pactl load-module module-null-sink sink_name=cloud_sink \
+      sink_properties=device.description=CloudBrowserSink >/dev/null 2>&1 || true
+  fi
+  pactl set-default-sink cloud_sink >/dev/null 2>&1 || true
+  pactl set-default-source cloud_sink.monitor >/dev/null 2>&1 || true
+fi
+export PULSE_CAPTURE_SOURCE=cloud_sink.monitor
+
 
 # Start the server
 export DISPLAY=:99

@@ -65,13 +65,18 @@ export class AudioCapture extends EventEmitter {
   }
 
   private startFfmpeg(): void {
-    // Capture from PulseAudio default sink, encode Opus, send RTP to our UDP socket.
+    // Capture the MONITOR of the virtual null sink that Chromium renders into.
+    // "-i default" resolves to the PulseAudio *source* (capture/input) device,
+    // which on a headless VPS is either absent or a silent dummy - that is why
+    // no audio ever reached the client.
+    // Override with PULSE_CAPTURE_SOURCE (e.g. "alsa_output.pci-0000.monitor").
     // -f pulse requires a running PulseAudio server (see Dockerfile / system deps).
+    const captureSource = process.env.PULSE_CAPTURE_SOURCE || 'cloud_sink.monitor';
     this.ffmpeg = spawn('ffmpeg', [
       '-hide_banner',
       '-loglevel', 'error',
       '-f', 'pulse',
-      '-i', 'default',
+      '-i', captureSource,
       '-c:a', 'libopus',
       '-b:a', '128k',
       '-ar', '48000',
