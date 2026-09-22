@@ -276,7 +276,7 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
                   </svg>
                 </div>
                 <p className="text-red-400 font-medium">Connection failed</p>
-                <p className="text-xs text-muted/60">Check the error above and try again</p>
+                <p className="text-xs text-muted/60">{api.error ?? 'Check the error above and try again'}</p>
               </>
             )}
           </div>

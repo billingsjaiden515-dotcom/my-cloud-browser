@@ -94,6 +94,9 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
   // clearing on start/stop/unmount, PLUS self-healing when the server
   // reports the session gone.
   const pollSessionRef = useRef<string | null>(null);
+  // Set when the USER intentionally stops the session, so the poll loop can
+  // distinguish "user clicked Stop" from "session died unexpectedly".
+  const intentionalStopRef = useRef(false);
   const clearPollLoop = useCallback((reason: string) => {
     if (pollTimerRef.current) {
       clearInterval(pollTimerRef.current);
@@ -112,10 +115,15 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
         const r = await fetch(`${API_BASE}/api/session/status?sessionId=${sid}`);
         if (!r.ok) return;
         const d = await r.json();
-        if (d.active === false) {
-          // Server no longer knows this session (e.g. orphaned by a newer
-          // start) — self-heal instead of 404ing forever.
-          clearPollLoop('status active=false');
+        if (d.active === false || d.alive === false) {
+          // Session gone (orphaned/stopped) or its browser target died
+          // (crash/OOM). If the user didn't stop it intentionally, surface a
+          // clear reconnect state instead of failing silently.
+          if (!intentionalStopRef.current) {
+            setConnectionState('failed');
+            setError('Session ended unexpectedly — click Start Browser to reconnect.');
+          }
+          clearPollLoop(d.alive === false ? 'browser target died' : 'status active=false');
           return;
         }
         if (d.url !== undefined) setCurrentUrl(prev => (prev === d.url ? prev : d.url));
@@ -215,6 +223,7 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
     // starting a new one — startPolling() alone can't be trusted for this
     // when a prior session was never cleanly stopped.
     stopPolling();
+    intentionalStopRef.current = false; // new session — unexpected deaths should surface again
     setError(null);
     setConnectionState('connecting');
 
@@ -338,6 +347,7 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
   }, [setupWebRTC, sendSignal, startPolling, stopPolling]);
 
   const stop = useCallback(async () => {
+    intentionalStopRef.current = true; // user-driven stop — not an unexpected death
     stopPolling();
     const sid = sessionIdRef.current;
     if (sid) {

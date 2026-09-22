@@ -7,6 +7,7 @@ import { SessionManager } from './session-manager.js';
 import { SignalingServer } from './signaling-server.js';
 import { getBrowserInfo } from './browser-finder.js';
 import { getConfiguredIceServers } from './webrtc-streamer.js';
+import { isTargetClosedError } from './browser-session.js';
 import http from 'http';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -89,7 +90,9 @@ export function createServer(): http.Server {
       const title = browser ? await browser.getTitle().catch(() => '') : '';
       const tabs = browser ? await browser.getTabs().catch(() => []) : [];
       const geo = browser ? browser.getGeometry() : null;
-      res.json({ sessionId, active: exists, url, title, tabs, width: geo?.width, height: geo?.height });
+      // alive=false ⇒ session exists but its page/browser target died. The
+      // frontend uses this to show the "session ended" reconnect state.
+      res.json({ sessionId, active: exists, alive: !!browser && !browser.isDead(), url, title, tabs, width: geo?.width, height: geo?.height });
     } else {
       const ids = sessionManager.getActiveSessionIds();
       res.json({ activeSessions: ids, count: ids.length });
@@ -126,6 +129,14 @@ export function createServer(): http.Server {
       res.json({ ok: true, url: currentUrl });
     } catch (e) {
       console.error('[HTTP] /api/navigate failed:', e);
+      // Dead target: navigate against a closed page is a session-death signal.
+      const sid = (req.body ?? {}) as { sessionId?: string };
+      const b = sid.sessionId ? sessionManager.getBrowser(sid.sessionId) : null;
+      if (b && (isTargetClosedError(e) || b.isDead())) {
+        b.markDead('navigate against closed target');
+        res.status(410).json({ error: 'session_dead', message: 'Session ended unexpectedly — please reconnect' });
+        return;
+      }
       res.status(500).json({ error: 'navigate_failed', message: e instanceof Error ? e.message : 'Unknown' });
     }
   });
@@ -266,6 +277,15 @@ export function createServer(): http.Server {
       res.json({ ok: true });
     } catch (e) {
       console.error('[HTTP] /api/input/mouse failed:', e);
+      // Dead target: report once as session_dead (410) and mark it, instead
+      // of a TargetCloseError 500 on every subsequent input request.
+      const { sessionId } = (req.body ?? {}) as { sessionId?: string };
+      const b = sessionId ? sessionManager.getBrowser(sessionId) : null;
+      if (b && (isTargetClosedError(e) || b.isDead())) {
+        b.markDead('input dispatch against closed target');
+        res.status(410).json({ error: 'session_dead', message: 'Session ended unexpectedly — please reconnect' });
+        return;
+      }
       res.status(500).json({ error: 'input_failed', message: e instanceof Error ? e.message : String(e) });
     }
   });
@@ -288,6 +308,15 @@ export function createServer(): http.Server {
       res.json({ ok: true });
     } catch (e) {
       console.error('[HTTP] /api/input/keyboard failed:', e);
+      // Dead target: report once as session_dead (410) and mark it, instead
+      // of a TargetCloseError 500 on every subsequent input request.
+      const { sessionId } = (req.body ?? {}) as { sessionId?: string };
+      const b = sessionId ? sessionManager.getBrowser(sessionId) : null;
+      if (b && (isTargetClosedError(e) || b.isDead())) {
+        b.markDead('input dispatch against closed target');
+        res.status(410).json({ error: 'session_dead', message: 'Session ended unexpectedly — please reconnect' });
+        return;
+      }
       res.status(500).json({ error: 'input_failed', message: e instanceof Error ? e.message : String(e) });
     }
   });

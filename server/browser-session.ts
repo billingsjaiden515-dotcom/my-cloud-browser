@@ -9,6 +9,12 @@ export interface FrameCallback {
   (jpegData: Buffer, width: number, height: number): void;
 }
 
+/** Detect Puppeteer target-death errors (crash, closed page/browser). */
+export function isTargetClosedError(e: unknown): boolean {
+  const msg = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+  return /targetcloseerror|session closed|target closed|page has been closed|browser has been closed/i.test(msg);
+}
+
 export interface TabInfo {
   id: string;
   url: string;
@@ -63,6 +69,15 @@ export class BrowserSession {
   // OUTSIDE the captured window region, so it never appears in the stream.
   private readonly PARK_X = 1850;
   private readonly PARK_Y = 1000;
+  // Set when the page/browser target dies unexpectedly (crash, OOM kill,
+  // closed window). Input fast-fails, /api/session/status reports alive:false,
+  // and the frontend shows "session ended" instead of spamming
+  // TargetCloseError 500s forever.
+  private dead = false;
+  // True while an intentional stop()/closeTab() is in progress, so the page
+  // 'close' events those cause are NOT misread as crashes.
+  private stopping = false;
+  private closingPages = new WeakSet<Page>();
 
   constructor(sessionId: string, browserType = 'chromium') {
     this.sessionId = sessionId;
@@ -141,8 +156,14 @@ export class BrowserSession {
     const page = pages[0] || (await this.browser.newPage());
     await this.setupPage(page);
 
+    // Browser-process death (crash / OOM kill) marks the session dead.
+    this.browser.on('disconnected', () => {
+      if (!this.stopping) this.markDead('browser process disconnected (crashed or killed)');
+    });
+
     const tabId = this.getPageId(page);
     this.pages.set(tabId, page);
+    this.watchPage(page);
     this.activePageId = tabId;
 
     await page.goto('https://www.google.com', {
@@ -188,8 +209,46 @@ export class BrowserSession {
   }
 
   getActivePage(): Page | null {
+    // Dead session: never hand out stale page objects — every input dispatch
+    // would throw TargetCloseError. Routes translate null into 410
+    // session_dead so the frontend can show the reconnect state.
+    if (this.dead) return null;
     if (!this.activePageId) return null;
     return this.pages.get(this.activePageId) || null;
+  }
+
+  /**
+   * Mark the session dead after the page/browser target closed unexpectedly.
+   * Called proactively from page 'close'/'error' and browser 'disconnected'
+   * events, and reactively from HTTP input routes when a TargetCloseError
+   * slips through. Idempotent: the first call wins and triggers teardown so
+   * the session disappears from the manager and status flips to not-found.
+   */
+  markDead(reason: string): void {
+    if (this.dead || this.stopping) return;
+    this.dead = true;
+    console.error(`[BrowserSession] Session ${this.sessionId} marked DEAD: ${reason} (at ${new Date().toISOString()})`);
+    // Best-effort teardown (async): stops screencast/encoder and removes the
+    // session, which also self-heals the frontend's polling loop.
+    void this.stop().catch(() => {});
+  }
+
+  isDead(): boolean {
+    return this.dead;
+  }
+
+  /** Attach crash/close detection to a page. Call for every created page. */
+  private watchPage(page: Page): void {
+    page.on('close', () => {
+      if (this.stopping || this.closingPages.has(page)) return; // intentional
+      console.error(`[BrowserSession] Page 'close' event (at ${new Date().toISOString()})`);
+      this.markDead('page closed unexpectedly');
+    });
+    page.on('error', (err: Error) => {
+      if (this.stopping) return;
+      console.error(`[BrowserSession] Page 'error' (crash) event: ${err.message}`);
+      this.markDead(`page crashed: ${err.message}`);
+    });
   }
 
   onFrame(callback: FrameCallback): void {
@@ -869,6 +928,7 @@ export class BrowserSession {
     await this.setupPage(page);
     const tabId = this.getPageId(page);
     this.pages.set(tabId, page);
+    this.watchPage(page);
 
     if (url !== 'about:blank') {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
@@ -899,6 +959,7 @@ export class BrowserSession {
         await this.switchTab(remaining[remaining.length - 1]);
       }
     }
+    this.closingPages.add(page); // intentional close — not a crash
     try { await page.close(); } catch { /* ignore */ }
     this.pages.delete(tabId);
   }
@@ -927,6 +988,7 @@ export class BrowserSession {
   // ─── Cleanup ──────────────────────────────────────────────────────────────────
 
   async stop(): Promise<void> {
+    this.stopping = true; // intentional: subsequent page close events are not crashes
     await this.stopScreencast();
     this.frameCallback = null;
     if (this.browser) {
