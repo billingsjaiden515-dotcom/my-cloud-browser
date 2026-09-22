@@ -144,11 +144,22 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
     api.sendMouseMove(x, y);
   }, [isConnected, getRelativeCoords, api]);
 
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    if (!isConnected) return;
-    e.preventDefault();
-    const { x, y } = getRelativeCoords(e);
-    api.sendMouseScroll(x, y, -e.deltaX, -e.deltaY);
+  // Native NON-PASSIVE wheel listener. React 17+ attaches onWheel passively
+  // at the root, so e.preventDefault() inside a React onWheel handler is
+  // invalid and spams "Unable to preventDefault inside passive event
+  // listener" on every scroll (37+ observed in console). The wheel handler
+  // must be a native listener with { passive: false }: it both blocks the
+  // page's default scroll AND forwards the scroll to the remote browser.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || !isConnected) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const { x, y } = getRelativeCoords(e);
+      api.sendMouseScroll(x, y, -e.deltaX, -e.deltaY);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
   }, [isConnected, getRelativeCoords, api]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -193,15 +204,6 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
     }
   }, [isConnected, api]);
 
-  // Passive wheel listener on the container to allow preventDefault
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const onWheel = (e: WheelEvent) => { if (isConnected) e.preventDefault(); };
-    el.addEventListener('wheel', onWheel, { passive: false });
-    return () => el.removeEventListener('wheel', onWheel);
-  }, [isConnected]);
-
   // NOTE: Viewport resizing removed. In headful mode (Xvfb) the Chromium
   // window has a fixed 1280x800 size. CSS object-contain scales the video
   // for display. Calling setViewport would physically resize the X11 window
@@ -235,7 +237,6 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
         onMouseUp={handleMouseUp}
         onDoubleClick={handleDoubleClick}
         onMouseMove={isConnected ? handleMouseMove : undefined}
-        onWheel={handleWheel}
         onContextMenu={handleContextMenu}
       />
 
