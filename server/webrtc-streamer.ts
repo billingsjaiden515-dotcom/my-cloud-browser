@@ -1,3 +1,4 @@
+import os from 'node:os';
 import { RTCPeerConnection, RTCSessionDescription } from 'werift';
 import type { BrowserSession } from './browser-session.js';
 import { Vp8Encoder, type Vp8Frame } from './vp8-encoder.js';
@@ -332,7 +333,14 @@ export class WebRTCStreamer {
         return;
       }
       const stats = this.encoder.getStats();
-      console.log(`[WebRTC] Encoder stats: ${stats.encodeFps}fps in, ${stats.droppedFrames} dropped, queue=${stats.queueSize}, audioPkts=${this.audioPacketCount}`);
+      // 1-minute load average vs core count tells us whether the box is the
+      // bottleneck. Sustained loadavg > cores means FFmpeg/Chromium are
+      // competing for CPU, which shows up as rising dropped frames and
+      // collapsing audio packet counts (buffer underruns).
+      const cores = os.cpus().length;
+      const load = os.loadavg()[0].toFixed(2);
+      const cpuPressure = os.loadavg()[0] > cores ? ' CPU-BOUND' : '';
+      console.log(`[WebRTC] Encoder stats: ${stats.encodeFps}fps in, ${stats.droppedFrames} dropped, queue=${stats.queueSize}, audioPkts=${this.audioPacketCount}, load=${load}/${cores} cores${cpuPressure}`);
     }, 10000);
 
     console.log('[WebRTC] Streaming started');

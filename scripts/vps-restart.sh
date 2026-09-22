@@ -47,8 +47,19 @@ if ! pgrep -x pulseaudio >/dev/null 2>&1; then
   sleep 1
 fi
 if command -v pactl >/dev/null 2>&1; then
-  if ! pactl list short sinks 2>/dev/null | grep -q "[[:space:]]cloud_sink[[:space:]]"; then
-    pactl load-module module-null-sink sink_name=cloud_sink \
+  # Sink must run at 48 kHz: Opus/WebRTC use a 48 kHz clock, so a native
+  # 48 kHz sink avoids a resample stage (CPU headroom on a 2-vCore VPS) and
+  # removes one source of timeline drift. A sink left over from an older run
+  # at 44.1 kHz is recreated. This runs before the server starts, so no audio
+  # is lost, and it also cleans up sinks leaked by previous unconditional
+  # load-module calls.
+  if pactl list sinks 2>/dev/null | grep -A 15 'Name: cloud_sink$' | grep -q '48000Hz'; then
+    : # existing sink is already 48 kHz
+  else
+    for mod in $(pactl list short modules 2>/dev/null | awk '$2 == "module-null-sink" { print $1 }'); do
+      pactl unload-module "$mod" >/dev/null 2>&1 || true
+    done
+    pactl load-module module-null-sink sink_name=cloud_sink rate=48000 channels=2 \
       sink_properties=device.description=CloudBrowserSink >/dev/null 2>&1 || true
   fi
   pactl set-default-sink cloud_sink >/dev/null 2>&1 || true

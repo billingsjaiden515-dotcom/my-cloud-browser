@@ -87,8 +87,21 @@ export class AudioCapture extends EventEmitter {
     this.ffmpeg = spawn('ffmpeg', [
       '-hide_banner',
       '-loglevel', 'error',
+      // -thread_queue_size: PulseAudio capture drops samples when ffmpeg's
+      // demuxer thread cannot drain the monitor fast enough. Under CPU
+      // contention (libvpx + Chromium + x11grab on 2 vCores) that showed up as
+      // audio packet counts collapsing over time (87 KB -> 3.7 KB per 5 s
+      // window) and garbled playback. 1024 frames (~21 ms at 48 kHz) gives the
+      // demuxer room to absorb a scheduling stall instead of losing samples.
+      '-thread_queue_size', '1024',
       '-f', 'pulse',
       '-i', captureSource,
+      // aresample=async=1 fills timestamp gaps with silence rather than
+      // letting the encoder emit a discontinuous timeline (the client jitter
+      // buffer turns those discontinuities into audible glitches). The 48000
+      // argument resamples the sink's rate up to the Opus/WebRTC clock in the
+      // same stage. -ar below restates the output rate for clarity.
+      '-af', 'aresample=48000:async=1',
       '-c:a', 'libopus',
       '-b:a', audioBitrate,
       '-compression_level', audioComplexity,
