@@ -189,9 +189,31 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
     pc.ontrack = (event: RTCTrackEvent) => {
       console.log('[Client] Track received:', event.track.kind, 'streams:', event.streams.length);
       if (videoRef.current && event.streams[0]) {
-        videoRef.current.srcObject = event.streams[0];
-        videoRef.current.play().catch((e) => {
-          console.warn('[Client] Auto-play failed:', e);
+        const v = videoRef.current;
+        v.srcObject = event.streams[0];
+        // Audio playback: ensure the track is audible. Chrome requires a user
+        // gesture for UNMUTED play — the Start click provides sticky
+        // activation, but if the browser still blocks it, fall back to muted
+        // playback and unmute on the next interaction.
+        v.volume = 1;
+        v.muted = false;
+        v.play().catch((e: DOMException) => {
+          if (e.name === 'NotAllowedError') {
+            console.warn('[Client] Unmuted autoplay blocked — starting muted, will unmute on next click/keypress');
+            v.muted = true;
+            v.play().catch(() => {});
+            const unmute = () => {
+              v.muted = false;
+              v.volume = 1;
+              v.play().catch(() => {});
+              window.removeEventListener('pointerdown', unmute);
+              window.removeEventListener('keydown', unmute);
+            };
+            window.addEventListener('pointerdown', unmute);
+            window.addEventListener('keydown', unmute);
+          } else {
+            console.warn('[Client] Auto-play failed:', e);
+          }
         });
       }
     };

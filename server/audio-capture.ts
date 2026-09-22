@@ -25,6 +25,13 @@ export class AudioCapture extends EventEmitter {
   private running = false;
   private port = 0;
 
+  // Diagnostics: packet/byte counters so we can verify the capture is
+  // actually producing audio data (not silence, not a failed connection).
+  private packetCount = 0;
+  private byteCount = 0;
+  private everGotPacket = false;
+  private statsTimer: ReturnType<typeof setInterval> | null = null;
+
   // RTP state for rewriting
   private ssrc = Math.floor(Math.random() * 0xffffffff);
   private sequenceNumber = Math.floor(Math.random() * 0xffff);
@@ -47,6 +54,13 @@ export class AudioCapture extends EventEmitter {
       const addr = this.udp!.address();
       this.port = addr.port;
       this.startFfmpeg();
+      // Periodic capture stats — "Started" alone proves nothing; these lines
+      // show whether ffmpeg's Pulse capture is actually producing data.
+      this.statsTimer = setInterval(() => {
+        console.log(`[AudioCapture] stats: ${this.packetCount} RTP packets / ${(this.byteCount / 1024).toFixed(1)} KB in last 5s`);
+        this.packetCount = 0;
+        this.byteCount = 0;
+      }, 5000);
     });
   }
 
@@ -94,6 +108,13 @@ export class AudioCapture extends EventEmitter {
   private handleRtpPacket(pkt: Buffer): void {
     if (pkt.length < 12) return;
 
+    this.packetCount++;
+    this.byteCount += pkt.length;
+    if (!this.everGotPacket) {
+      this.everGotPacket = true;
+      console.log('[AudioCapture] First RTP packet received — Pulse capture is producing audio data');
+    }
+
     const now = Date.now();
     const elapsed = this.lastPacketTime > 0 ? now - this.lastPacketTime : 20;
     this.lastPacketTime = now;
@@ -118,6 +139,10 @@ export class AudioCapture extends EventEmitter {
   stop(): void {
     if (!this.running) return;
     this.running = false;
+    if (this.statsTimer) {
+      clearInterval(this.statsTimer);
+      this.statsTimer = null;
+    }
     if (this.ffmpeg) {
       try { this.ffmpeg.kill('SIGTERM'); } catch { /* ignore */ }
       this.ffmpeg = null;

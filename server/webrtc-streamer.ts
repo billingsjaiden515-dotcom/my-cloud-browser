@@ -120,6 +120,7 @@ export class WebRTCStreamer {
 
   // Metrics
   private frameCount = 0;
+  private audioPacketCount = 0;
   private statsTimer: ReturnType<typeof setInterval> | null = null;
   private currentWidth = 0;
   private currentHeight = 0;
@@ -237,6 +238,7 @@ export class WebRTCStreamer {
     // Add send-only audio transceiver for the Opus audio track
     const audioTransceiver = this.pc.addTransceiver('audio', { direction: 'sendonly' });
     this.audioSender = audioTransceiver.sender;
+    console.log('[WebRTC] Audio sendonly transceiver created (Opus PT 111) — Opus RTP from PulseAudio capture will be forwarded here');
 
     if (!this.pc) {
       throw new Error('Peer connection is null - streamer may have been stopped');
@@ -312,6 +314,7 @@ export class WebRTCStreamer {
     this.audioCapture = new AudioCapture();
     this.audioCapture.on('packet', (pkt: Buffer) => {
       if (!this.streaming || !this.audioSender) return;
+      this.audioPacketCount++;
       try {
         this.audioSender.sendRtp(pkt);
       } catch { /* peer not ready; swallow */ }
@@ -329,7 +332,7 @@ export class WebRTCStreamer {
         return;
       }
       const stats = this.encoder.getStats();
-      console.log(`[WebRTC] Encoder stats: ${stats.encodeFps}fps in, ${stats.droppedFrames} dropped, queue=${stats.queueSize}`);
+      console.log(`[WebRTC] Encoder stats: ${stats.encodeFps}fps in, ${stats.droppedFrames} dropped, queue=${stats.queueSize}, audioPkts=${this.audioPacketCount}`);
     }, 10000);
 
     console.log('[WebRTC] Streaming started');
@@ -373,6 +376,7 @@ export class WebRTCStreamer {
     this.currentWidth = 0;
     this.currentHeight = 0;
     this.encoderRestarting = false;
+    this.audioPacketCount = 0;
     this.encoder.stop();
     if (this.audioCapture) {
       this.audioCapture.stop();
