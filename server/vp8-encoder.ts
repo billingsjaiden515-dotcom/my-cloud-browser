@@ -52,7 +52,10 @@ export class Vp8Encoder extends EventEmitter {
 
   private ffmpegFailed = false;
 
-  start(width: number, height: number, bitrate = '2000k'): void {
+  // Default bitrate/CPU tradeoff targets a 2-vCore VPS where libvpx shares the
+  // CPU with Chromium, x11grab, MJPEG and Opus. Override without editing code:
+  // VP8_BITRATE=2000k / VP8_CPU_USED=6 for sharper output when CPU allows.
+  start(width: number, height: number, bitrate = process.env.VP8_BITRATE || '1200k'): void {
     if (this.running) return;
     this.running = true;
     this.startTime = Date.now();
@@ -71,7 +74,9 @@ export class Vp8Encoder extends EventEmitter {
 
     // Use ffmpeg to encode JPEG frames to VP8 IVF.
     // -deadline realtime + -lag-in-frames 0 + -auto-alt-ref 0 = low latency.
-    // -cpu-used 6 = realtime quality/speed balance (8 was fastest but visibly blockier).
+    // -cpu-used is the single biggest libvpx CPU lever; 8 is the fastest
+    // realtime setting, 6 is visibly sharper but costs noticeably more CPU.
+    const cpuUsed = process.env.VP8_CPU_USED || '8';
     // No -minrate (VBR under -maxrate cap) lets libvpx allocate bits for motion.
     // -qmin/-qmax bound quality so motion scenes don't collapse into blockiness.
     this.ffmpeg = spawn('ffmpeg', [
@@ -85,7 +90,7 @@ export class Vp8Encoder extends EventEmitter {
       '-b:v', bitrate,
       '-maxrate', bitrate,
       '-deadline', 'realtime',
-      '-cpu-used', '6',
+      '-cpu-used', cpuUsed,
       '-lag-in-frames', '0',
       '-error-resilient', '1',
       '-auto-alt-ref', '0',

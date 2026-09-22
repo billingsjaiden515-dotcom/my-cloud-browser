@@ -36,11 +36,16 @@ export class AudioCapture extends EventEmitter {
   private ssrc = Math.floor(Math.random() * 0xffffffff);
   private sequenceNumber = Math.floor(Math.random() * 0xffff);
   private timestamp = Math.floor(Math.random() * 0xffffffff);
-  private lastPacketTime = 0;
+  // RTP timestamp of the last packet we received from FFmpeg. Used to derive
+  // output timestamp deltas from the sender's clock instead of wall-clock
+  // arrival time (see handleRtpPacket). -1 = no packet seen yet.
+  private lastSrcTimestamp = -1;
 
   start(): void {
     if (this.running) return;
     this.running = true;
+    // New capture run: forget the previous sender's timestamp baseline.
+    this.lastSrcTimestamp = -1;
 
     this.udp = dgram.createSocket('udp4');
     this.udp.on('message', (msg: Buffer) => {
@@ -72,13 +77,22 @@ export class AudioCapture extends EventEmitter {
     // Override with PULSE_CAPTURE_SOURCE (e.g. "alsa_output.pci-0000.monitor").
     // -f pulse requires a running PulseAudio server (see Dockerfile / system deps).
     const captureSource = process.env.PULSE_CAPTURE_SOURCE || 'cloud_sink.monitor';
+    // Modest, call-tier encode settings. libopus defaults to compression_level
+    // 10 (max effort), which burns CPU needed by libvpx + Chromium on a
+    // 2-vCore VPS; 5 is a large CPU saving for negligible quality loss at
+    // these bitrates. 64 kbps stereo Opus is transparent for browser audio.
+    // Both are env-overridable (AUDIO_BITRATE / AUDIO_COMPLEXITY).
+    const audioBitrate = process.env.AUDIO_BITRATE || '64k';
+    const audioComplexity = process.env.AUDIO_COMPLEXITY || '5';
     this.ffmpeg = spawn('ffmpeg', [
       '-hide_banner',
       '-loglevel', 'error',
       '-f', 'pulse',
       '-i', captureSource,
       '-c:a', 'libopus',
-      '-b:a', '128k',
+      '-b:a', audioBitrate,
+      '-compression_level', audioComplexity,
+      '-frame_duration', '20',
       '-ar', '48000',
       '-ac', '2',
       '-f', 'rtp',
@@ -120,12 +134,21 @@ export class AudioCapture extends EventEmitter {
       console.log('[AudioCapture] First RTP packet received — Pulse capture is producing audio data');
     }
 
-    const now = Date.now();
-    const elapsed = this.lastPacketTime > 0 ? now - this.lastPacketTime : 20;
-    this.lastPacketTime = now;
-
-    // Advance RTP timestamp proportional to real elapsed time
-    const tsDelta = Math.round((elapsed * CLOCK_RATE) / 1000);
+    // Advance the timestamp by the SENDER's own RTP delta, not by wall-clock
+    // arrival time. Under CPU load FFmpeg's datagrams arrive in bursts, so
+    // wall-clock deltas swing wildly (0 ms, then 60 ms); the client's jitter
+    // buffer re-times audio off those deltas and the result sounds distorted /
+    // garbled. FFmpeg's clock is evenly spaced (one Opus frame = 20 ms = 960
+    // samples), so mirroring its deltas hands the client a correct timeline.
+    const srcTs = pkt.readUInt32BE(4);
+    let tsDelta = (CLOCK_RATE * 20) / 1000; // 960 samples = one 20 ms frame
+    if (this.lastSrcTimestamp >= 0) {
+      const diff = (srcTs - this.lastSrcTimestamp) >>> 0;
+      // Only accept plausible deltas. Anything >= 1 s is a discontinuity
+      // (sender restart / counter reset) and keeps the default spacing.
+      if (diff > 0 && diff < CLOCK_RATE) tsDelta = diff;
+    }
+    this.lastSrcTimestamp = srcTs;
     this.timestamp = (this.timestamp + tsDelta) >>> 0;
 
     // Copy and rewrite header to match our RTP state
