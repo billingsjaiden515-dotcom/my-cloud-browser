@@ -249,6 +249,61 @@ export class BrowserSession {
       console.error(`[BrowserSession] Page 'error' (crash) event: ${err.message}`);
       this.markDead(`page crashed: ${err.message}`);
     });
+
+    // --- Diagnostic instrumentation (evidence capture, not a fix) ----------
+    // Without these listeners the server is structurally blind to what the
+    // remote page reports: a YouTube player fatal error, a MediaSource failure,
+    // or an aborted media segment fetch produces NO server.log output at all,
+    // so playback failures look "silent". Errors, failed requests and non-2xx
+    // media responses are always logged; routine page noise is gated behind
+    // PAGE_DEBUG=0 for quieter runs.
+    const verbose = process.env.PAGE_DEBUG !== '0';
+    const ts = () => new Date().toISOString().slice(11, 23);
+
+    page.on('console', (msg) => {
+      const type = msg.type();
+      const text = msg.text();
+      if (type === 'error' || type === 'warn' || type === 'assert') {
+        console.error(`[Page:console:${type}] ${ts()} ${text}`);
+      } else if (verbose) {
+        console.log(`[Page:console:${type}] ${ts()} ${text}`);
+      }
+    });
+
+    page.on('pageerror', (err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[Page:pageerror] ${ts()} ${message}`);
+    });
+
+    page.on('requestfailed', (req) => {
+      const failure = req.failure();
+      console.error(
+        `[Page:reqfailed] ${ts()} ${req.resourceType()} ${req.url().slice(0, 140)} — ${failure?.errorText ?? 'unknown'}`,
+      );
+    });
+
+    // Media traffic is the key signal for duration-correlated playback failure:
+    // YouTube streams DASH segments continuously, so a gap or a burst of
+    // non-2xx responses in these lines pinpoints the exact second playback
+    // breaks, and distinguishes "network fetch stopped" from "player aborted".
+    page.on('response', (res) => {
+      const url = res.url();
+      const status = res.status();
+      const type = res.request().resourceType();
+      const isMedia = type === 'media' || url.includes('googlevideo.com');
+      if (!isMedia) return;
+      if (status >= 400) {
+        console.error(`[Page:media] ${ts()} HTTP ${status} ${url.slice(0, 140)}`);
+      } else if (verbose) {
+        console.log(`[Page:media] ${ts()} HTTP ${status} ${type} ${url.slice(0, 120)}`);
+      }
+    });
+
+    page.on('framenavigated', (frame) => {
+      if (frame === page.mainFrame()) {
+        console.log(`[Page:nav] ${ts()} ${frame.url().slice(0, 140)}`);
+      }
+    });
   }
 
   onFrame(callback: FrameCallback): void {
