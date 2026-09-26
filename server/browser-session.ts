@@ -39,8 +39,18 @@ export class BrowserSession {
   private captureInterval: ReturnType<typeof setInterval> | null = null;
   private capturePending = false;
   private frameCounter = 0;
-  private readonly TARGET_FPS = 20; // Reduced for better performance on VPS
-  private readonly JPEG_QUALITY = 60; // Lower quality = faster encoding
+  // Capture rate is the single biggest CPU lever. Every captured frame costs an
+  // MJPEG encode (x11grab), then a JPEG decode + VP8 encode (encoder), plus a
+  // full byte copy in Node — all of which compete with Chromium's own software
+  // video decode on a 2-vCore host. Capturing FASTER than the pipeline can
+  // encode does not improve the stream: those frames are dropped by the
+  // encoder's bounded queue, but their CPU cost is still paid, which is what
+  // made load climb continuously during video playback until YouTube's player
+  // gave up. Override without editing code: CAPTURE_FPS=20 with spare cores.
+  private readonly TARGET_FPS = Number(process.env.CAPTURE_FPS) || 12;
+  // JPEG quality drives both MJPEG encode and decode cost. 60 was needlessly
+  // high for a stream that is re-encoded to VP8 at ~1200k anyway.
+  private readonly JPEG_QUALITY = Number(process.env.JPEG_QUALITY) || 50;
   private x11ffmpeg: ChildProcess | null = null;
   // Height of the browser chrome (tab strip / address bar) rendered at the top of
   // the x11grab capture. Headful Chromium draws its own UI, so page viewport
@@ -348,6 +358,14 @@ export class BrowserSession {
     const height = this.winH;
     const fps = this.TARGET_FPS;
 
+    // MJPEG's -q:v is only meaningful in the 1-31 range (lower = better quality).
+    // FFmpeg silently clamps anything outside it, so log the exact value being
+    // passed rather than assuming JPEG_QUALITY maps where we think it does.
+    const qscale = Math.round((100 - this.JPEG_QUALITY) / 10);
+    console.log(
+      `[BrowserSession] x11grab: -q:v ${qscale} (JPEG_QUALITY=${this.JPEG_QUALITY}, valid mjpeg range 1-31)`
+    );
+
     // Persistent FFmpeg process: x11grab -> raw BGR frames -> JPEG pipe
     // Using rawvideo + mjpeg in one process avoids per-frame startup overhead
     this.x11ffmpeg = spawn('ffmpeg', [
@@ -359,7 +377,7 @@ export class BrowserSession {
       '-i', `${display}+${this.winX},${this.winY}`,
       '-f', 'image2pipe',
       '-vcodec', 'mjpeg',
-      '-q:v', String(Math.round((100 - this.JPEG_QUALITY) / 10)),
+      '-q:v', String(qscale),
       'pipe:1',
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
 

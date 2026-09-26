@@ -91,6 +91,11 @@ export class Vp8Encoder extends EventEmitter {
       '-maxrate', bitrate,
       '-deadline', 'realtime',
       '-cpu-used', cpuUsed,
+      // NOTE: -row-mt and -tile-columns are VP9-only options in FFmpeg's libvpx
+      // wrapper — VP8 rejects them, which kills the encoder at spawn and breaks
+      // video entirely. Do not add them back.
+      // -threads is generic, always accepted, and safe for VP8.
+      '-threads', process.env.VP8_THREADS || '2',
       '-lag-in-frames', '0',
       '-error-resilient', '1',
       '-auto-alt-ref', '0',
