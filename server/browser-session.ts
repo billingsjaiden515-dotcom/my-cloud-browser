@@ -38,6 +38,14 @@ export class BrowserSession {
   private readonly VIEWPORT_DEBOUNCE_MS = 500;
   private captureInterval: ReturnType<typeof setInterval> | null = null;
   private capturePending = false;
+  // Temporary YouTube segment-fetch diagnosis (see startMediaProbe).
+  // The reported failure was a FROZEN buffered-range bar (the grey bar): the
+  // player played its initial buffer and then never pulled another segment.
+  // These fields own the sampler timer so it is always torn down with the
+  // session (an earlier polling leak came from an unowned interval).
+  // Set MEDIA_PROBE=0 to disable.
+  private mediaProbeTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly MEDIA_PROBE_MS = Number(process.env.MEDIA_PROBE_MS) || 5000;
   private frameCounter = 0;
   // Capture rate is the single biggest CPU lever. Every captured frame costs an
   // MJPEG encode (x11grab), then a JPEG decode + VP8 encode (encoder), plus a
@@ -191,6 +199,10 @@ export class BrowserSession {
       await this.measureChromeGeometry(page);
     }
 
+    // Start sampling the media element's buffered range so a frozen grey bar
+    // (the reported symptom) is recorded in server.log with timestamps.
+    this.startMediaProbe();
+
     console.log(`[BrowserSession] Browser launched, session: ${this.sessionId}`);
   }
 
@@ -285,8 +297,45 @@ export class BrowserSession {
       console.error(`[Page:pageerror] ${ts()} ${message}`);
     });
 
+    // Segment-fetch lifecycle tracing. The observed signature was a frozen
+    // buffered-range bar — the player stopped pulling video data — and the
+    // 'response' listener below fires on HEADERS, so on its own it cannot
+    // distinguish "the next segment was never requested" from "it was requested
+    // and never completed". These listeners pair every googlevideo segment
+    // request with its terminal event, so the log shows the last request issued
+    // before the stall, its byte count, and whether it finished, failed or
+    // simply never appeared again.
+    const segState = new WeakMap<object, { id: number; at: number }>();
+    let segSeq = 0;
+    const isSegment = (url: string) => url.includes('googlevideo.com/videoplayback');
+
+    page.on('request', (req) => {
+      if (!isSegment(req.url())) return;
+      const id = ++segSeq;
+      segState.set(req, { id, at: Date.now() });
+      console.log(`[Page:seg] ${ts()} #${id} REQ range=${req.headers()['range'] ?? '-'}`);
+    });
+
+    page.on('requestfinished', (req) => {
+      if (!isSegment(req.url())) return;
+      const st = segState.get(req);
+      const ms = st ? Date.now() - st.at : -1;
+      const res = req.response();
+      const range = res?.headers()['content-range'] ?? '-';
+      console.log(`[Page:seg] ${ts()} #${st?.id ?? '?'} DONE ${ms}ms range=${range}`);
+    });
+
     page.on('requestfailed', (req) => {
       const failure = req.failure();
+      const st = segState.get(req);
+      if (st) {
+        // A segment that was issued and died is the strongest possible evidence
+        // for "fetch started but never completed".
+        console.error(
+          `[Page:seg] ${ts()} #${st.id} FAILED ${Date.now() - st.at}ms — ${failure?.errorText ?? 'unknown'}`,
+        );
+        return;
+      }
       console.error(
         `[Page:reqfailed] ${ts()} ${req.resourceType()} ${req.url().slice(0, 140)} — ${failure?.errorText ?? 'unknown'}`,
       );
@@ -314,6 +363,69 @@ export class BrowserSession {
         console.log(`[Page:nav] ${ts()} ${frame.url().slice(0, 140)}`);
       }
     });
+  }
+
+  /**
+   * Sample the active page's media element every MEDIA_PROBE_MS and log its
+   * buffered range, currentTime, readyState and networkState.
+   *
+   * This is the ONLY measurement that can see the reported symptom directly:
+   * the grey buffered-range bar freezing while the red playhead keeps moving.
+   * A frozen buffered end + advancing currentTime is proof the player is not
+   * receiving/appendBuffer-ing new data (a fetch/append stall), which is a
+   * completely different failure from the decode-saturation signature the
+   * capture FPS / VP8 settings address. readyState/networkState then separate
+   * "player decided to stop requesting" (rdy=4, net=1 IDLE) from "request in
+   * flight but starving" (rdy=3, net=2 LOADING) from "player gave up" (net=3
+   * NO_SOURCE).
+   *
+   * Evidence capture only — it never changes playback. Best-effort and
+   * self-cleaning: failures are swallowed and the timer is stopped in stop().
+   */
+  private startMediaProbe(): void {
+    if (process.env.MEDIA_PROBE === '0') return;
+    if (this.mediaProbeTimer) return;
+    this.mediaProbeTimer = setInterval(() => {
+      const page = this.getActivePage();
+      if (!page || page.isClosed()) return;
+      void page.evaluate(() => {
+        const v = document.querySelector('video');
+        if (!v) return null;
+        const b = v.buffered;
+        const bufferedEnd = b.length ? b.end(b.length - 1) : 0;
+        return {
+          t: Math.round(v.currentTime * 10) / 10,
+          buf: Math.round(bufferedEnd * 10) / 10,
+          rdy: v.readyState,
+          net: v.networkState,
+          paused: v.paused,
+          // YouTube intentionally stops fetching/buffering when it believes the
+          // tab is hidden or unoccluded, and Chromium throttles timers and
+          // requestAnimationFrame for background/occluded pages. Under Xvfb with
+          // --disable-gpu the page can be classified as hidden even though it is
+          // the only window. If vis=hidden lines up with the frozen grey bar,
+          // the root cause is visibility handling, NOT CPU or network.
+          vis: document.visibilityState,
+          focus: document.hasFocus(),
+          src: (v.currentSrc || '').slice(0, 40),
+        };
+      }).then((s) => {
+        if (!s) return;
+        const ahead = (s.buf - s.t).toFixed(1);
+        // BUFFER AHEAD is the number that collapses to ~0 at the failure moment.
+        console.log(
+          `[Page:probe] ${new Date().toISOString().slice(11, 23)} t=${s.t} buf=${s.buf} ahead=${ahead} ` +
+          `rdy=${s.rdy} net=${s.net} vis=${s.vis} focus=${s.focus}${s.paused ? ' PAUSED' : ''}`,
+        );
+      }).catch(() => { /* page navigating/closed */ });
+    }, this.MEDIA_PROBE_MS);
+  }
+
+  private stopMediaProbe(): void {
+    if (this.mediaProbeTimer) {
+      clearInterval(this.mediaProbeTimer);
+      this.mediaProbeTimer = null;
+    }
   }
 
   onFrame(callback: FrameCallback): void {
@@ -1062,6 +1174,7 @@ export class BrowserSession {
 
   async stop(): Promise<void> {
     this.stopping = true; // intentional: subsequent page close events are not crashes
+    this.stopMediaProbe();
     await this.stopScreencast();
     this.frameCallback = null;
     if (this.browser) {
