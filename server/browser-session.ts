@@ -46,6 +46,10 @@ export class BrowserSession {
   // Set MEDIA_PROBE=0 to disable.
   private mediaProbeTimer: ReturnType<typeof setInterval> | null = null;
   private readonly MEDIA_PROBE_MS = Number(process.env.MEDIA_PROBE_MS) || 5000;
+  // Last MSE event tail printed, so the sourceopen/sourceended/abort/append-throw
+  // history is logged whenever it CHANGES rather than every tick (a healthy run
+  // stays readable, a SourceBuffer failure is still impossible to miss).
+  private lastMseSig = '';
   private frameCounter = 0;
   // Capture rate is the single biggest CPU lever. Every captured frame costs an
   // MJPEG encode (x11grab), then a JPEG decode + VP8 encode (encoder), plus a
@@ -217,6 +221,10 @@ export class BrowserSession {
   }
 
   private async setupPage(page: Page): Promise<void> {
+    // Install MediaSource/SourceBuffer instrumentation BEFORE any navigation:
+    // evaluateOnNewDocument only applies to documents created after it is
+    // called, and YouTube creates its SourceBuffers on the first page load.
+    await this.installMseProbe(page);
     // In headful/X11 mode, do NOT set an emulated viewport: CDP emulation makes
     // window.innerWidth/innerHeight report the emulated size (1280x800) instead
     // of the real page content area (~1280x720 after the ~80px chrome), which
@@ -366,18 +374,155 @@ export class BrowserSession {
   }
 
   /**
-   * Sample the active page's media element every MEDIA_PROBE_MS and log its
-   * buffered range, currentTime, readyState and networkState.
+   * Install MediaSource / SourceBuffer instrumentation before any navigation.
    *
-   * This is the ONLY measurement that can see the reported symptom directly:
-   * the grey buffered-range bar freezing while the red playhead keeps moving.
-   * A frozen buffered end + advancing currentTime is proof the player is not
-   * receiving/appendBuffer-ing new data (a fetch/append stall), which is a
-   * completely different failure from the decode-saturation signature the
-   * capture FPS / VP8 settings address. readyState/networkState then separate
-   * "player decided to stop requesting" (rdy=4, net=1 IDLE) from "request in
-   * flight but starving" (rdy=3, net=2 LOADING) from "player gave up" (net=3
-   * NO_SOURCE).
+   * Why this is required: SourceBuffer objects are NOT reachable from the
+   * <video> element, so a listener-based probe cannot see them at all. The only
+   * way to observe append failures is to patch the MSE interfaces themselves
+   * before the site's player builds its SourceBuffers.
+   *
+   * The reported symptom — buffered range frozen at 60s while videoplayback
+   * segments keep completing normally, then a hard reset of the element
+   * (t=0, buf=0, paused) — is an APPEND-side failure, so each patch targets a
+   * specific way that can happen:
+   *
+   *   - MediaSource.addSourceBuffer   -> register every SourceBuffer created
+   *   - MediaSource.addEventListener  -> capture sourceopen/sourceended/
+   *                                      sourceclose (an EARLY sourceended
+   *                                      stops the buffered range growing for
+   *                                      good, with downloads still succeeding)
+   *   - MediaSource.endOfStream       -> log duration+reason at the call itself
+   *   - SourceBuffer.appendBuffer     -> count appends and capture THROWN
+   *                                      errors (e.g. QuotaExceededError) that a
+   *                                      player is free to swallow silently
+   *   - SourceBuffer.remove           -> removals can carve gaps into the range
+   *   - error/abort/updateend         -> every terminal append event, recorded
+   *
+   * Deliberately NOT intercepted: the `onsourceopen`/`onsourceended`/
+   * `onsourceclose` PROPERTY handlers. Shadowing those would stop the browser
+   * from ever installing the player's own handler, breaking playback outright.
+   * Only addEventListener is wrapped, and it always forwards.
+   *
+   * Purely observational: every original method is still invoked with its
+   * original arguments and its return value is passed through unchanged.
+   * Live objects are published on window.__cbMse for startMediaProbe() to read.
+   * Disable with MEDIA_PROBE=0.
+   */
+  private async installMseProbe(page: Page): Promise<void> {
+    if (process.env.MEDIA_PROBE === '0') return;
+    try {
+      await page.evaluateOnNewDocument(() => {
+        const w = window as any;
+        const MS = w.MediaSource;
+        const SB = w.SourceBuffer;
+        if (!MS || !SB || !MS.prototype || !SB.prototype) return;
+
+        const t0 = Date.now();
+        const reg: any = { msObjs: [], sbObjs: [], events: [], endOfStream: [] };
+        w.__cbMse = reg;
+
+        const rec = (type: string, detail: string) => {
+          reg.events.push({ at: Date.now() - t0, type, detail });
+          if (reg.events.length > 300) reg.events.shift();
+        };
+        const fold = (tr: any) => {
+          const out: any[] = [];
+          try {
+            for (let i = 0; i < tr.length; i++) {
+              out.push([Math.round(tr.start(i) * 100) / 100, Math.round(tr.end(i) * 100) / 100]);
+            }
+          } catch (e) { out.push(['ERR', String(e)]); }
+          return out;
+        };
+
+        const track = (sb: any, mime: string) => {
+          if (reg.sbObjs.some((o: any) => o.sb === sb)) return;
+          const entry: any = { i: reg.sbObjs.length, mime, sb, appends: 0, errs: [] };
+          reg.sbObjs.push(entry);
+          rec('sb.create', `#${entry.i} ${mime}`);
+          const note = (kind: string) => {
+            entry.errs.push({ at: Date.now() - t0, kind });
+            rec('sb.' + kind, `#${entry.i} ${mime}`);
+          };
+          sb.addEventListener('error', () => note('error'));
+          sb.addEventListener('abort', () => note('abort'));
+          sb.addEventListener('updateend', () => {
+            rec('sb.updateend', `#${entry.i} ranges=${JSON.stringify(fold(sb.buffered))} updating=${sb.updating}`);
+          });
+        };
+
+        const addSB = MS.prototype.addSourceBuffer;
+        MS.prototype.addSourceBuffer = function (mime: string) {
+          const sb = addSB.call(this, mime);
+          if (reg.msObjs.indexOf(this) === -1) reg.msObjs.push(this);
+          rec('ms.addSourceBuffer', mime);
+          track(sb, mime);
+          return sb;
+        };
+
+        const aEL = MS.prototype.addEventListener;
+        MS.prototype.addEventListener = function (type: string, fn: any, opts: any) {
+          if (!this.__cbHooked) {
+            this.__cbHooked = true;
+            if (reg.msObjs.indexOf(this) === -1) reg.msObjs.push(this);
+            const self = this;
+            for (const t of ['sourceopen', 'sourceended', 'sourceclose']) {
+              aEL.call(self, t, () => {
+                rec('ms.' + t, `readyState=${self.readyState} duration=${self.duration}`);
+              });
+            }
+          }
+          return aEL.call(this, type, fn, opts);
+        };
+
+        const eos = MS.prototype.endOfStream;
+        MS.prototype.endOfStream = function (reason?: any) {
+          const d = Number(this.duration);
+          reg.endOfStream.push({ at: Date.now() - t0, duration: d, reason: String(reason ?? '') });
+          rec('ms.endOfStream', `duration=${d} reason=${reason ?? ''}`);
+          return eos.call(this, reason);
+        };
+
+        const append = SB.prototype.appendBuffer;
+        SB.prototype.appendBuffer = function (data: any) {
+          const entry = reg.sbObjs.find((o: any) => o.sb === this);
+          if (entry) entry.appends++;
+          try {
+            return append.call(this, data);
+          } catch (err: any) {
+            const kind = (err && err.name) || String(err);
+            if (entry) entry.errs.push({ at: Date.now() - t0, kind: 'append:' + kind });
+            rec('sb.appendThrew', `${entry ? '#' + entry.i : '?'} ${kind} bytes=${data && data.byteLength}`);
+            throw err;
+          }
+        };
+
+        const remove = SB.prototype.remove;
+        SB.prototype.remove = function (start: number, end: number) {
+          const entry = reg.sbObjs.find((o: any) => o.sb === this);
+          rec('sb.remove', `${entry ? '#' + entry.i : '?'} ${start}-${end}`);
+          return remove.call(this, start, end);
+        };
+
+        rec('installed', 'MSE probe active');
+      });
+    } catch { /* instrumentation is best-effort; never block launch */ }
+  }
+
+  /**
+   * Sample the active page's media element AND every MediaSource/SourceBuffer
+   * every MEDIA_PROBE_MS.
+   * Observed failure this must explain: the buffered range freezes at ~60s
+   * while videoplayback segments keep completing successfully, then the element
+   * hard-resets (t=0, buf=0, paused). Download health is therefore NOT the
+   * problem, so the probe must separate three possibilities:
+   *   (a) data is appended into a DISCONTINUOUS 2nd range that never merges
+   *       with the 1st -> EVERY range is logged, per SourceBuffer and on the
+   *       element, because a single end() value hides this completely;
+   *   (b) data is appended but rejected -> per-SourceBuffer append counts,
+   *       error/abort history and endOfStream() calls from installMseProbe();
+   *   (c) the player gave up -> video.error (code+message), readyState /
+   *       networkState, and the hard-reset transition itself.
    *
    * Evidence capture only — it never changes playback. Best-effort and
    * self-cleaning: failures are swallowed and the timer is stopped in stop().
@@ -385,38 +530,83 @@ export class BrowserSession {
   private startMediaProbe(): void {
     if (process.env.MEDIA_PROBE === '0') return;
     if (this.mediaProbeTimer) return;
+    this.lastMseSig = '';
     this.mediaProbeTimer = setInterval(() => {
       const page = this.getActivePage();
       if (!page || page.isClosed()) return;
       void page.evaluate(() => {
+        const w = window as any;
+        // EVERY range, not just the last end: a 2nd discontinuous range is the
+        // whole point of this probe, and end() alone cannot reveal it.
+        const fold = (tr: any) => {
+          const out: any[] = [];
+          try {
+            for (let i = 0; i < tr.length; i++) {
+              out.push([Math.round(tr.start(i) * 100) / 100, Math.round(tr.end(i) * 100) / 100]);
+            }
+          } catch (e) { out.push(['ERR', String(e)]); }
+          return out;
+        };
+        const mse = w.__cbMse;
+        const sbs = ((mse && mse.sbObjs) || []).map((o: any) => ({
+          id: o.i,
+          mime: String(o.mime).replace(/^video\/mp4.*/, 'v').replace(/^audio\/mp4.*/, 'a'),
+          ranges: fold(o.sb.buffered),
+          updating: !!o.sb.updating,
+          appends: o.appends,
+          errs: (o.errs || []).slice(-6),
+        }));
+        const mss = ((mse && mse.msObjs) || []).map((s: any) => {
+          const d = Number(s.duration);
+          return { ready: s.readyState, dur: isFinite(d) ? Math.round(d * 10) / 10 : String(s.duration) };
+        });
         const v = document.querySelector('video');
         if (!v) return null;
-        const b = v.buffered;
-        const bufferedEnd = b.length ? b.end(b.length - 1) : 0;
+        const dur = Number(v.duration);
         return {
-          t: Math.round(v.currentTime * 10) / 10,
-          buf: Math.round(bufferedEnd * 10) / 10,
+          t: Math.round(v.currentTime * 100) / 100,
+          ranges: fold(v.buffered),
+          dur: isFinite(dur) ? Math.round(dur * 10) / 10 : String(v.duration),
           rdy: v.readyState,
           net: v.networkState,
           paused: v.paused,
-          // YouTube intentionally stops fetching/buffering when it believes the
-          // tab is hidden or unoccluded, and Chromium throttles timers and
-          // requestAnimationFrame for background/occluded pages. Under Xvfb with
-          // --disable-gpu the page can be classified as hidden even though it is
-          // the only window. If vis=hidden lines up with the frozen grey bar,
-          // the root cause is visibility handling, NOT CPU or network.
           vis: document.visibilityState,
           focus: document.hasFocus(),
-          src: (v.currentSrc || '').slice(0, 40),
+          err: v.error ? `code=${v.error.code} msg=${v.error.message}` : '',
+          sbs,
+          mss,
+          eos: ((mse && mse.endOfStream) || []).slice(-3),
+          evts: ((mse && mse.events) || []).slice(-8),
         };
-      }).then((s) => {
+      }).then((s: any) => {
         if (!s) return;
-        const ahead = (s.buf - s.t).toFixed(1);
-        // BUFFER AHEAD is the number that collapses to ~0 at the failure moment.
+        const now = new Date().toISOString().slice(11, 23);
+        const ends = s.ranges
+          .filter((r: any) => typeof r[1] === 'number')
+          .map((r: any) => r[1]);
+        const bufEnd = ends.length ? Math.max(...ends) : 0;
+        const ahead = (bufEnd - s.t).toFixed(1);
         console.log(
-          `[Page:probe] ${new Date().toISOString().slice(11, 23)} t=${s.t} buf=${s.buf} ahead=${ahead} ` +
-          `rdy=${s.rdy} net=${s.net} vis=${s.vis} focus=${s.focus}${s.paused ? ' PAUSED' : ''}`,
+          `[Page:probe] ${now} t=${s.t} dur=${s.dur} buf=${bufEnd} nranges=${s.ranges.length} ahead=${ahead} ` +
+          `rdy=${s.rdy} net=${s.net} vis=${s.vis} focus=${s.focus}${s.paused ? ' PAUSED' : ''}` +
+          (s.err ? ` ERR(${s.err})` : ''),
         );
+        // Element aggregate AND each SourceBuffer's own ranges: the aggregate
+        // can mask a per-track gap, so both are logged every tick.
+        console.log(
+          `[Page:mse] ${now} elem=${JSON.stringify(s.ranges)} ` +
+          `sb=${JSON.stringify(s.sbs)} ms=${JSON.stringify(s.mss)}`,
+        );
+        // The MSE event/endOfStream history prints only when it CHANGES, so a
+        // healthy run stays readable while a sourceended / abort / append-throw
+        // is impossible to miss.
+        const sig = JSON.stringify(s.evts) + '|' + JSON.stringify(s.eos);
+        if (sig !== this.lastMseSig) {
+          this.lastMseSig = sig;
+          console.error(
+            `[Page:mse:evt] ${now} eos=${JSON.stringify(s.eos)} evts=${JSON.stringify(s.evts)}`,
+          );
+        }
       }).catch(() => { /* page navigating/closed */ });
     }, this.MEDIA_PROBE_MS);
   }
