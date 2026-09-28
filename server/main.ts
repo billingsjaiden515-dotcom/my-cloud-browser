@@ -3,7 +3,7 @@ import { createServer } from './http-server.js';
 // Render provides PORT; fall back to 3001 for local dev.
 const PORT = parseInt(process.env.PORT || process.env.SERVER_PORT || '3001', 10);
 
-const server = createServer();
+const { server, sessionManager } = createServer();
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[Server] Cloud Browser backend listening on port ${PORT}`);
@@ -11,11 +11,59 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`[Server] WebSocket signaling: ws://0.0.0.0:${PORT}/signal`);
 });
 
-const cleanup = async () => {
-  console.log('[Server] Shutting down...');
-  server.close();
-  process.exit(0);
-};
+// Hard ceiling on teardown. A wedged child must never be able to keep the
+// process alive forever, so we always force-exit after this.
+const SHUTDOWN_TIMEOUT_MS = Number(process.env.SHUTDOWN_TIMEOUT_MS) || 5000;
 
-process.on('SIGINT', cleanup);
-process.on('SIGTERM', cleanup);
+let shuttingDown = false;
+
+async function shutdown(reason: string, exitCode = 0): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[Server] Shutting down (${reason})...`);
+
+  // unref'd: this must not itself be a reason for the process to stay alive,
+  // but it must still fire if an open connection (or a stuck child) holds the
+  // event loop open past the ceiling.
+  const forceExit = setTimeout(() => {
+    console.error(`[Server] Teardown exceeded ${SHUTDOWN_TIMEOUT_MS}ms — forcing exit`);
+    process.exit(exitCode);
+  }, SHUTDOWN_TIMEOUT_MS);
+  forceExit.unref();
+
+  try {
+    // This is what actually kills Chromium and the three ffmpeg children
+    // (x11grab, VP8, Opus). It MUST be awaited, and it must happen BEFORE the
+    // listener is closed: the previous handler called server.close() and then
+    // process.exit(0) on the very next line, so stopAll() never got to run and
+    // every shutdown/restart orphaned its children.
+    await sessionManager.stopAll();
+  } catch (e) {
+    console.error('[Server] Error stopping sessions:', e);
+  }
+
+  server.close(() => {
+    clearTimeout(forceExit);
+    console.log('[Server] Closed cleanly');
+    process.exit(exitCode);
+  });
+
+  // server.close() waits for open connections to drain. A held keep-alive or
+  // WebSocket would otherwise stall teardown until the ceiling above fires.
+  const withConn = server as unknown as { closeAllConnections?: () => void };
+  withConn.closeAllConnections?.();
+}
+
+process.on('SIGINT', () => { void shutdown('SIGINT'); });
+process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
+
+// Crashes must also tear down, or the children outlive the server they belong
+// to and accumulate as orphans. Exit code 1 keeps the failure visible.
+process.on('uncaughtException', (err) => {
+  console.error('[Server] Uncaught exception:', err);
+  void shutdown('uncaughtException', 1);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[Server] Unhandled rejection:', reason);
+  void shutdown('unhandledRejection', 1);
+});

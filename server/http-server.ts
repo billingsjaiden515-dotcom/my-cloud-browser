@@ -17,7 +17,7 @@ const DIST_DIR = path.basename(path.dirname(__dirname)) === 'dist-server'
   ? path.resolve(__dirname, '../../dist')
   : path.resolve(__dirname, '../dist');
 
-export function createServer(): http.Server {
+export function createServer(): { server: http.Server; sessionManager: SessionManager } {
   const app = express();
   app.use(cors());
   app.use(express.json());
@@ -329,5 +329,9 @@ export function createServer(): http.Server {
     signaling.close();
   });
 
-  return server;
+  // The manager is returned so the entry point can drive teardown explicitly
+  // and AWAIT it. Relying on this 'close' handler alone is what leaked
+  // processes: server.close() is asynchronous, so a caller that exited
+  // straight afterwards tore the process down before stopAll() ever ran.
+  return { server, sessionManager };
 }
