@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { BrowserSession } from './browser-session.js';
 import { WebRTCStreamer } from './webrtc-streamer.js';
+import { registerSessionStart, unregisterSessionStart } from './process-reaper.js';
 
 interface ActiveSession {
   id: string;
@@ -30,6 +31,11 @@ export class SessionManager {
       browserType,
     };
     this.sessions.set(id, session);
+
+    // Tell the reaper when live work began. The ffmpeg watchdog treats the
+    // earliest live session start as its cutoff, so anything older is an orphan
+    // from a previous session or a previous server run.
+    registerSessionStart(session.createdAt);
 
     // Set a timeout to clean up the session if WebRTC never connects
     this.scheduleSessionTimeout(id);
@@ -102,6 +108,8 @@ export class SessionManager {
     if (session.streamer) await session.streamer.stop();
     await session.browser.stop();
     this.sessions.delete(sessionId);
+    // This session no longer counts towards the watchdog cutoff.
+    unregisterSessionStart(session.createdAt);
     console.log(`[SessionManager] Session ${sessionId} stopped`);
   }
 

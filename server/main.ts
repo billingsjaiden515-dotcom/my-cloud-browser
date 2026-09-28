@@ -1,4 +1,5 @@
 import { createServer } from './http-server.js';
+import { startFfmpegWatchdog, killAllTracked, killAllTrackedSync } from './process-reaper.js';
 
 // Render provides PORT; fall back to 3001 for local dev.
 const PORT = parseInt(process.env.PORT || process.env.SERVER_PORT || '3001', 10);
@@ -10,6 +11,15 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`[Server] HTTP API: http://0.0.0.0:${PORT}/api`);
   console.log(`[Server] WebSocket signaling: ws://0.0.0.0:${PORT}/signal`);
 });
+
+// Watchdog: every 60s log the running ffmpeg processes and SIGKILL any that
+// predate the current session -- i.e. that survived a previous session or a
+// hard parent kill, which no in-process teardown could have prevented.
+startFfmpegWatchdog();
+
+// Last-resort safety net. The 'exit' hook cannot await anything, so this is a
+// purely synchronous SIGKILL of everything still tracked.
+process.on('exit', () => { killAllTrackedSync(); });
 
 // Hard ceiling on teardown. A wedged child must never be able to keep the
 // process alive forever, so we always force-exit after this.
@@ -40,6 +50,14 @@ async function shutdown(reason: string, exitCode = 0): Promise<void> {
     await sessionManager.stopAll();
   } catch (e) {
     console.error('[Server] Error stopping sessions:', e);
+  }
+
+  // Final sweep: children that belong to no session (or that outlived a failed
+  // session teardown) are killed here, and we wait for them.
+  try {
+    await killAllTracked('server shutdown');
+  } catch (e) {
+    console.error('[Server] Error reaping child processes:', e);
   }
 
   server.close(() => {

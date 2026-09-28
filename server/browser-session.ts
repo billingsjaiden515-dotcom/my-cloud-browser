@@ -1,6 +1,7 @@
 import puppeteer, { Browser, Page, CDPSession } from 'puppeteer-core';
 import { spawn, ChildProcess } from 'child_process';
 import { getChromiumPath } from './browser-finder.js';
+import { spawnTracked, killChild, registerExternalChild } from './process-reaper.js';
 
 export const VIEWPORT_WIDTH = 1280;
 export const VIEWPORT_HEIGHT = 800;
@@ -173,6 +174,11 @@ export class BrowserSession {
         ] : []),
       ],
     });
+
+    // Track Chromium itself so teardown can force-kill it. A graceful CDP close
+    // can fail or hang, and a hung browser keeps its zygote and renderers alive.
+    const browserProc = this.browser.process();
+    if (browserProc) registerExternalChild(browserProc, 'chromium');
 
     const pages = await this.browser.pages();
     const page = pages[0] || (await this.browser.newPage());
@@ -670,7 +676,7 @@ export class BrowserSession {
 
     // Persistent FFmpeg process: x11grab -> raw BGR frames -> JPEG pipe
     // Using rawvideo + mjpeg in one process avoids per-frame startup overhead
-    this.x11ffmpeg = spawn('ffmpeg', [
+    this.x11ffmpeg = spawnTracked('ffmpeg', [
       '-hide_banner',
       '-loglevel', 'error',
       '-f', 'x11grab',
@@ -683,9 +689,8 @@ export class BrowserSession {
       'pipe:1',
     ], {
       stdio: ['ignore', 'pipe', 'pipe'],
-      // Own process group, so teardown can kill the group.
-      detached: true,
-    });
+      // spawnTracked forces detached: true -> own process group.
+    }, 'ffmpeg-x11grab');
 
     this.x11recvBuf = Buffer.alloc(0);
 
@@ -787,31 +792,28 @@ export class BrowserSession {
       clearInterval(this.captureInterval);
       this.captureInterval = null;
     }
-    this.stopX11Capture();
+    await this.stopX11Capture();
     if (this.frameCounter > 0) {
       console.log(`[BrowserSession] Capture stopped after ${this.frameCounter} frames`);
     }
     this.frameCounter = 0;
   }
 
-  private stopX11Capture(): void {
-    if (this.x11ffmpeg) {
-      // Group kill (negative pid): the child was spawned detached so it leads
-      // its own group, and this also reaps anything it forked.
-      //
-      // This ffmpeg is the worst offender for lingering. It blocks waiting for
-      // X events, so once Xvfb is gone it never writes again and therefore
-      // never notices that its stdout reader (this process) has died -- no
-      // broken pipe, no EOF, no exit. SIGTERM alone leaves it running forever.
-      const p = this.x11ffmpeg;
-      try {
-        process.kill(-p.pid!, 'SIGKILL');
-      } catch {
-        try { p.kill('SIGKILL'); } catch { /* already gone */ }
-      }
-      this.x11ffmpeg = null;
-    }
+  /**
+   * Kill the x11grab ffmpeg and WAIT for it to exit.
+   *
+   * This is the worst offender for lingering: it blocks waiting for X events,
+   * so once Xvfb is gone it never writes again and therefore never notices that
+   * its stdout reader (this process) has died -- no broken pipe, no EOF, no
+   * exit. A lone SIGTERM left it running forever.
+   */
+  private async stopX11Capture(): Promise<void> {
+    const proc = this.x11ffmpeg;
+    this.x11ffmpeg = null;
     this.x11recvBuf = Buffer.alloc(0);
+    if (proc) {
+      await killChild(proc, 'ffmpeg-x11grab');
+    }
   }
 
   getViewport(): { width: number; height: number } {
@@ -1384,8 +1386,12 @@ export class BrowserSession {
     await this.stopScreencast();
     this.frameCallback = null;
     if (this.browser) {
+      const browserProc = this.browser.process();
       try { await this.browser.close(); } catch { /* ignore */ }
       this.browser = null;
+      // The CDP close above is graceful. Force-kill whatever survived it, so a
+      // hung or wedged Chromium (and its renderers) cannot outlive the session.
+      await killChild(browserProc, 'chromium');
     }
     this.pages.clear();
     this.activePageId = null;

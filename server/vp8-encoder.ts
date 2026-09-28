@@ -1,5 +1,6 @@
-import { spawn, ChildProcess } from 'child_process';
+import { ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
+import { spawnTracked, killChild } from './process-reaper.js';
 
 export interface Vp8Frame {
   data: Buffer;
@@ -79,7 +80,7 @@ export class Vp8Encoder extends EventEmitter {
     const cpuUsed = process.env.VP8_CPU_USED || '8';
     // No -minrate (VBR under -maxrate cap) lets libvpx allocate bits for motion.
     // -qmin/-qmax bound quality so motion scenes don't collapse into blockiness.
-    this.ffmpeg = spawn('ffmpeg', [
+    this.ffmpeg = spawnTracked('ffmpeg', [
       '-hide_banner',
       '-loglevel', 'error',
       '-f', 'image2pipe',
@@ -107,10 +108,9 @@ export class Vp8Encoder extends EventEmitter {
       'pipe:1',
     ], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      // Own process group. Teardown can then kill the GROUP, which also reaps
-      // anything ffmpeg forked, instead of leaving grandchildren behind.
-      detached: true,
-    });
+      // spawnTracked forces detached: true, so ffmpeg leads its own process
+      // group -- required for the group kill to be possible at all.
+    }, 'ffmpeg-vp8');
 
     const proc = this.ffmpeg;
 
@@ -268,28 +268,30 @@ export class Vp8Encoder extends EventEmitter {
     };
   }
 
-  stop(): void {
+  /**
+   * Stop the encoder and WAIT for ffmpeg to actually exit.
+   *
+   * Async because teardown must be verifiable: the fields are cleared
+   * synchronously so a restart can begin immediately, while the kill itself is
+   * awaited and escalates SIGTERM -> SIGKILL through the reaper.
+   */
+  async stop(): Promise<void> {
     if (!this.running) return;
     this.running = false;
     this.queue = [];
     this.queueProcessing = false;
-    if (this.ffmpeg) {
-      try { this.ffmpeg.stdin?.end(); } catch {}
-      // Kill the whole process GROUP (negative pid), not just this pid. The
-      // child is a group leader because it was spawned detached, so this reaps
-      // anything it forked too. SIGKILL, not SIGTERM: SIGTERM is only a request,
-      // and a child that ignores it is orphaned with nobody left to reap it --
-      // which is exactly how these processes leaked.
-      const p = this.ffmpeg;
-      try {
-        process.kill(-p.pid!, 'SIGKILL');
-      } catch {
-        try { p.kill('SIGKILL'); } catch { /* already gone */ }
-      }
-      this.ffmpeg = null;
-    }
+    // Detach the reference first: start() may be called as soon as this
+    // returns, and it must never see (or reuse) the dying process.
+    const proc = this.ffmpeg;
+    this.ffmpeg = null;
     this.recvBuf = Buffer.alloc(0);
     this.headerConsumed = false;
+    if (proc) {
+      // Closing stdin lets ffmpeg finish cleanly if it can; killChild
+      // guarantees it does not survive if it cannot.
+      try { proc.stdin?.end(); } catch { /* already closed */ }
+      await killChild(proc, 'ffmpeg-vp8');
+    }
     console.log(`[VP8Encoder] Stopped (${this.frameCount} encoded, ${this.droppedFrames} dropped)`);
   }
 

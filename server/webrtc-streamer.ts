@@ -294,8 +294,11 @@ export class WebRTCStreamer {
         this.currentHeight = frameHeight;
         if (!this.encoderRestarting) {
           this.encoderRestarting = true;
-          // Restart encoder with new dimensions (drop any queued frames)
-          this.encoder.stop();
+          // Restart encoder with new dimensions (drop any queued frames).
+          // Deliberately NOT awaited: this runs on the frame path, and stop()
+          // clears its state synchronously so start() can begin immediately
+          // while the old ffmpeg is reaped in the background.
+          void this.encoder.stop();
           this.encoder.start(frameWidth, frameHeight);
           this.encoderRestarting = false;
         }
@@ -385,9 +388,9 @@ export class WebRTCStreamer {
     this.currentHeight = 0;
     this.encoderRestarting = false;
     this.audioPacketCount = 0;
-    this.encoder.stop();
+    await this.encoder.stop();
     if (this.audioCapture) {
-      this.audioCapture.stop();
+      await this.audioCapture.stop();
       this.audioCapture = null;
     }
     this.audioSender = null;

@@ -1,6 +1,7 @@
-import { spawn, ChildProcess } from 'child_process';
+import { ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import dgram from 'dgram';
+import { spawnTracked, killChild } from './process-reaper.js';
 
 const OPUS_PAYLOAD_TYPE = 111;
 const CLOCK_RATE = 48000;
@@ -84,7 +85,7 @@ export class AudioCapture extends EventEmitter {
     // Both are env-overridable (AUDIO_BITRATE / AUDIO_COMPLEXITY).
     const audioBitrate = process.env.AUDIO_BITRATE || '64k';
     const audioComplexity = process.env.AUDIO_COMPLEXITY || '5';
-    this.ffmpeg = spawn('ffmpeg', [
+    this.ffmpeg = spawnTracked('ffmpeg', [
       '-hide_banner',
       '-loglevel', 'error',
       // -thread_queue_size: PulseAudio capture drops samples when ffmpeg's
@@ -113,9 +114,8 @@ export class AudioCapture extends EventEmitter {
       `rtp://127.0.0.1:${this.port}`,
     ], {
       stdio: ['ignore', 'ignore', 'pipe'],
-      // Own process group, so teardown can kill the group.
-      detached: true,
-    });
+      // spawnTracked forces detached: true -> own process group.
+    }, 'ffmpeg-opus');
 
     // Log ALL stderr so we can see the real failure reason (e.g. "pulseaudio: ...",
     // "Unknown encoder 'libopus'", "Connection refused"). Filtering only lines
@@ -181,25 +181,25 @@ export class AudioCapture extends EventEmitter {
     this.emit('packet', out);
   }
 
-  stop(): void {
+  /**
+   * Stop audio capture and WAIT for ffmpeg to exit.
+   *
+   * This is the ffmpeg that MUST be killed explicitly rather than relying on
+   * the parent's death: it writes Opus to a UDP socket, so nothing it holds
+   * breaks when the server goes away -- no broken pipe, no EOF, no exit. Left
+   * alone it simply runs forever.
+   */
+  async stop(): Promise<void> {
     if (!this.running) return;
     this.running = false;
     if (this.statsTimer) {
       clearInterval(this.statsTimer);
       this.statsTimer = null;
     }
-    if (this.ffmpeg) {
-      // Group kill (see vp8-encoder.ts): the child was spawned detached so it
-      // leads its own group. This ffmpeg writes to a UDP socket, so nothing it
-      // holds breaks when the server dies -- without a hard kill it simply
-      // outlives the server forever.
-      const p = this.ffmpeg;
-      try {
-        process.kill(-p.pid!, 'SIGKILL');
-      } catch {
-        try { p.kill('SIGKILL'); } catch { /* already gone */ }
-      }
-      this.ffmpeg = null;
+    const proc = this.ffmpeg;
+    this.ffmpeg = null;
+    if (proc) {
+      await killChild(proc, 'ffmpeg-opus');
     }
     if (this.udp) {
       try { this.udp.close(); } catch { /* ignore */ }
