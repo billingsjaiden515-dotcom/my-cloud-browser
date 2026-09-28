@@ -111,7 +111,11 @@ export class AudioCapture extends EventEmitter {
       '-f', 'rtp',
       '-payload_type', String(OPUS_PAYLOAD_TYPE),
       `rtp://127.0.0.1:${this.port}`,
-    ], { stdio: ['ignore', 'ignore', 'pipe'] });
+    ], {
+      stdio: ['ignore', 'ignore', 'pipe'],
+      // Own process group, so teardown can kill the group.
+      detached: true,
+    });
 
     // Log ALL stderr so we can see the real failure reason (e.g. "pulseaudio: ...",
     // "Unknown encoder 'libopus'", "Connection refused"). Filtering only lines
@@ -185,7 +189,16 @@ export class AudioCapture extends EventEmitter {
       this.statsTimer = null;
     }
     if (this.ffmpeg) {
-      try { this.ffmpeg.kill('SIGTERM'); } catch { /* ignore */ }
+      // Group kill (see vp8-encoder.ts): the child was spawned detached so it
+      // leads its own group. This ffmpeg writes to a UDP socket, so nothing it
+      // holds breaks when the server dies -- without a hard kill it simply
+      // outlives the server forever.
+      const p = this.ffmpeg;
+      try {
+        process.kill(-p.pid!, 'SIGKILL');
+      } catch {
+        try { p.kill('SIGKILL'); } catch { /* already gone */ }
+      }
       this.ffmpeg = null;
     }
     if (this.udp) {

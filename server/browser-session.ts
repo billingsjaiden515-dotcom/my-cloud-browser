@@ -681,7 +681,11 @@ export class BrowserSession {
       '-vcodec', 'mjpeg',
       '-q:v', String(qscale),
       'pipe:1',
-    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    ], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      // Own process group, so teardown can kill the group.
+      detached: true,
+    });
 
     this.x11recvBuf = Buffer.alloc(0);
 
@@ -792,7 +796,19 @@ export class BrowserSession {
 
   private stopX11Capture(): void {
     if (this.x11ffmpeg) {
-      try { this.x11ffmpeg.kill('SIGTERM'); } catch { /* ignore */ }
+      // Group kill (negative pid): the child was spawned detached so it leads
+      // its own group, and this also reaps anything it forked.
+      //
+      // This ffmpeg is the worst offender for lingering. It blocks waiting for
+      // X events, so once Xvfb is gone it never writes again and therefore
+      // never notices that its stdout reader (this process) has died -- no
+      // broken pipe, no EOF, no exit. SIGTERM alone leaves it running forever.
+      const p = this.x11ffmpeg;
+      try {
+        process.kill(-p.pid!, 'SIGKILL');
+      } catch {
+        try { p.kill('SIGKILL'); } catch { /* already gone */ }
+      }
       this.x11ffmpeg = null;
     }
     this.x11recvBuf = Buffer.alloc(0);

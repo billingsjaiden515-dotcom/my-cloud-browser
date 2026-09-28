@@ -107,6 +107,9 @@ export class Vp8Encoder extends EventEmitter {
       'pipe:1',
     ], {
       stdio: ['pipe', 'pipe', 'pipe'],
+      // Own process group. Teardown can then kill the GROUP, which also reaps
+      // anything ffmpeg forked, instead of leaving grandchildren behind.
+      detached: true,
     });
 
     const proc = this.ffmpeg;
@@ -272,7 +275,17 @@ export class Vp8Encoder extends EventEmitter {
     this.queueProcessing = false;
     if (this.ffmpeg) {
       try { this.ffmpeg.stdin?.end(); } catch {}
-      try { this.ffmpeg.kill('SIGTERM'); } catch {}
+      // Kill the whole process GROUP (negative pid), not just this pid. The
+      // child is a group leader because it was spawned detached, so this reaps
+      // anything it forked too. SIGKILL, not SIGTERM: SIGTERM is only a request,
+      // and a child that ignores it is orphaned with nobody left to reap it --
+      // which is exactly how these processes leaked.
+      const p = this.ffmpeg;
+      try {
+        process.kill(-p.pid!, 'SIGKILL');
+      } catch {
+        try { p.kill('SIGKILL'); } catch { /* already gone */ }
+      }
       this.ffmpeg = null;
     }
     this.recvBuf = Buffer.alloc(0);
