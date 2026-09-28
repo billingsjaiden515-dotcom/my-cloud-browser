@@ -2,9 +2,23 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { SessionManager } from './session-manager.js';
 import type { SignalMessage, OfferPayload } from '../src/shared/types.js';
 
+// How long a session survives after its last client disconnects. A transient
+// network drop or an accidental reload should not destroy the remote browser,
+// so teardown waits for this window and is cancelled if a client comes back.
+//
+// This is the fix for the biggest orphan source: once WebRTC connects,
+// cancelSessionTimeout() clears the only cleanup path, so a closed tab left a
+// whole session (Chromium + the x11grab/VP8/Opus ffmpeg processes) running
+// until the server was restarted.
+const DISCONNECT_GRACE_MS = Number(process.env.DISCONNECT_GRACE_MS) || 30_000;
+
 export class SignalingServer {
   private wss: WebSocketServer;
   private sessionManager: SessionManager;
+  // Live clients per session. A session is only torn down once this set is
+  // empty AND the grace period passes with nobody reclaiming it.
+  private clientsBySession = new Map<string, Set<WebSocket>>();
+  private disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(server: import('http').Server, sessionManager: SessionManager) {
     this.sessionManager = sessionManager;
@@ -20,6 +34,7 @@ export class SignalingServer {
 
           if (msg.type === 'offer') {
             clientSessionId = msg.sessionId;
+            this.claimSession(ws, msg.sessionId);
             await this.handleOffer(ws, msg);
           } else if (msg.type === 'ice') {
             await this.handleIce(msg);
@@ -37,15 +52,17 @@ export class SignalingServer {
       ws.on('close', (code: number, reason: Buffer) => {
         if (clientSessionId) {
           console.log(`[Signaling] WebSocket closed for session ${clientSessionId} (code: ${code}, reason: ${reason.toString() || 'none'})`);
-          // Don't immediately kill the session on WebSocket close.
-          // A transient network drop shouldn't destroy the browser session.
-          // Instead, clean up input state (release stuck mouse buttons / modifiers)
-          // and let the session timeout handle actual cleanup if WebRTC never connects.
+          // Release stuck mouse buttons / held modifiers before anything else.
           const session = this.sessionManager.getSession(clientSessionId);
           if (session?.browser) {
             session.browser.releaseInputState();
             console.log(`[Signaling] Released input state for session ${clientSessionId}`);
           }
+          // Do not kill the session immediately (a transient drop or a reload
+          // should not destroy the remote browser), but DO arm teardown: once
+          // WebRTC has connected the session timeout is cancelled, so without
+          // this nothing would ever stop the session and its ffmpeg children.
+          this.releaseSession(ws, clientSessionId);
         }
       });
 
@@ -53,6 +70,58 @@ export class SignalingServer {
         console.error('[Signaling] WebSocket error:', e);
       });
     });
+  }
+
+  /**
+   * Register a client for a session and cancel any pending disconnect teardown.
+   * Called when a client (re)claims a session with an offer.
+   */
+  private claimSession(ws: WebSocket, sessionId: string): void {
+    const pending = this.disconnectTimers.get(sessionId);
+    if (pending) {
+      clearTimeout(pending);
+      this.disconnectTimers.delete(sessionId);
+      console.log(`[Signaling] Client reconnected to session ${sessionId} — disconnect teardown cancelled`);
+    }
+    let clients = this.clientsBySession.get(sessionId);
+    if (!clients) {
+      clients = new Set<WebSocket>();
+      this.clientsBySession.set(sessionId, clients);
+    }
+    clients.add(ws);
+  }
+
+  /**
+   * Drop a client. When the LAST client for a session goes away, arm a grace
+   * timer that stops the session unless someone reconnects first. This is the
+   * only teardown path that exists once WebRTC has connected.
+   */
+  private releaseSession(ws: WebSocket, sessionId: string): void {
+    const clients = this.clientsBySession.get(sessionId);
+    if (clients) {
+      clients.delete(ws);
+      if (clients.size > 0) return; // another viewer is still attached
+      this.clientsBySession.delete(sessionId);
+    }
+    if (this.disconnectTimers.has(sessionId)) return; // already scheduled
+
+    console.log(
+      `[Signaling] Last client left session ${sessionId} — stopping it in ${DISCONNECT_GRACE_MS}ms unless a client reconnects`,
+    );
+
+    const timer = setTimeout(() => {
+      this.disconnectTimers.delete(sessionId);
+      // Someone reattached during the grace period.
+      if (this.clientsBySession.has(sessionId)) return;
+      if (!this.sessionManager.hasSession(sessionId)) return;
+
+      console.log(`[Signaling] Session ${sessionId} was not reclaimed within ${DISCONNECT_GRACE_MS}ms — stopping it`);
+      this.sessionManager.stopSession(sessionId).catch((e) => {
+        console.error(`[Signaling] Failed to stop disconnected session ${sessionId}:`, e);
+      });
+    }, DISCONNECT_GRACE_MS);
+
+    this.disconnectTimers.set(sessionId, timer);
   }
 
   private async handleOffer(ws: WebSocket, msg: SignalMessage): Promise<void> {
@@ -117,6 +186,12 @@ export class SignalingServer {
   }
 
   close(): void {
+    // Pending disconnect timers must be cleared: they would otherwise keep the
+    // event loop alive during shutdown and fire stopSession() on a manager we
+    // are already tearing down.
+    for (const timer of this.disconnectTimers.values()) clearTimeout(timer);
+    this.disconnectTimers.clear();
+    this.clientsBySession.clear();
     this.wss.close();
   }
 }
