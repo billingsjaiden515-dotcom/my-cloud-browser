@@ -6,12 +6,50 @@ cd /root/my-cloud-browser
 
 echo "=== Restarting Cloud Browser ==="
 
-# Kill existing processes
+# Stop the previous run.
+#
+# Order matters. Ask node to shut down GRACEFULLY first so the teardown in
+# main.ts actually runs and kills Chromium + the three ffmpeg processes itself;
+# a bare pkill -9 here would skip that teardown entirely. Then force-kill what
+# ignores it, and sweep the child programs explicitly.
+#
+# ffmpeg MUST be swept explicitly: children are spawned detached (their own
+# process groups), so killing node's group does not reach them, and if node was
+# OOM-killed they are already re-parented to init. That is the leak that let
+# processes accumulate for days until the OOM killer fired.
 echo "Stopping existing processes..."
-pkill -f "node.*main" 2>/dev/null || true
-pkill -f "chromium" 2>/dev/null || true
-pkill Xvfb 2>/dev/null || true
+pkill -TERM -f "node.*main" 2>/dev/null || true
+for _ in $(seq 1 20); do
+  pgrep -f "node.*main" >/dev/null 2>&1 || break
+  sleep 0.5
+done
+
+# Kill the whole process group of the previous run if we recorded it, so
+# anything not covered by the name patterns below is still reached in one shot.
+PGID_FILE=/tmp/cloud-browser-server.pgid
+if [ -f "$PGID_FILE" ]; then
+  PREV_PGID=$(cat "$PGID_FILE" 2>/dev/null || true)
+  if [ -n "${PREV_PGID:-}" ] && [ "$PREV_PGID" -gt 1 ] 2>/dev/null; then
+    echo "  killing previous process group $PREV_PGID"
+    kill -9 -"$PREV_PGID" 2>/dev/null || true
+  fi
+  rm -f "$PGID_FILE"
+fi
+
+pkill -9 -f "node.*main" 2>/dev/null || true
+pkill -9 -f "chromium" 2>/dev/null || true
+pkill -9 -f "ffmpeg" 2>/dev/null || true
+pkill -9 -f "Xvfb" 2>/dev/null || true
 sleep 2
+
+# Verify instead of assuming: a surviving process here is a leak, so say so.
+LEFTOVER=$(pgrep -af "chromium|ffmpeg|Xvfb" 2>/dev/null || true)
+if [ -n "$LEFTOVER" ]; then
+  echo "WARNING: still alive after cleanup:"
+  echo "$LEFTOVER"
+else
+  echo "Cleanup verified: no chromium/ffmpeg/Xvfb remaining"
+fi
 
 # Remove stale X lock file (important!)
 rm -f /tmp/.X99-lock
@@ -19,6 +57,38 @@ rm -f /tmp/.X99-lock
 # Pull latest changes
 echo "Updating code..."
 git pull
+
+# Install the EXTERNAL reaper and its systemd timer.
+#
+# Placement is deliberate and matters twice over:
+#   * AFTER `git pull`, so the units installed are the current ones.
+#   * BEFORE Xvfb starts: at this point the previous server is dead and no
+#     display exists yet, so the immediate sweep clears leftovers from earlier
+#     runs without touching a display. If it ran after Xvfb started it would
+#     find no node process and kill the display we just launched -- while the
+#     script still printed "Restart Successful!".
+# It must live outside node at all: if the server is OOM-killed, its own
+# in-process reaper cannot run and the children it spawned keep burning CPU and
+# RAM until the next OOM.
+echo "Installing orphan reaper + timer..."
+if [ -f scripts/cloud-browser-reaper.sh ]; then
+  install -m 0755 scripts/cloud-browser-reaper.sh /usr/local/bin/cloud-browser-reaper.sh
+fi
+if command -v systemctl >/dev/null 2>&1 && [ -f scripts/cloud-browser-reaper.timer ]; then
+  install -m 0644 scripts/cloud-browser-reaper.service /etc/systemd/system/cloud-browser-reaper.service
+  install -m 0644 scripts/cloud-browser-reaper.timer /etc/systemd/system/cloud-browser-reaper.timer
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  systemctl enable --now cloud-browser-reaper.timer >/dev/null 2>&1 || true
+  TIMER_LINE=$(systemctl list-timers cloud-browser-reaper.timer --no-legend 2>/dev/null | head -1)
+  echo "  timer: ${TIMER_LINE:-ENABLE_FAILED}"
+  systemctl start cloud-browser-reaper.service >/dev/null 2>&1 || true
+  echo "  initial sweep run (verify: journalctl -u cloud-browser-reaper -n 20)"
+elif [ -x /usr/local/bin/cloud-browser-reaper.sh ]; then
+  echo "  WARNING: systemctl unavailable — timer NOT installed, running a one-shot sweep"
+  /usr/local/bin/cloud-browser-reaper.sh
+else
+  echo "  WARNING: reaper script missing (scripts/cloud-browser-reaper.sh not found)"
+fi
 
 # Rebuild
 echo "Rebuilding..."
@@ -74,6 +144,17 @@ export DISPLAY=:99
 export PORT=3001
 nohup node dist-server/server/main.js > server.log 2>&1 &
 sleep 3
+
+# Record the new server's process group so the NEXT run can kill it in one
+# shot instead of chasing individual PIDs.
+NODE_PID=$(pgrep -f "node.*dist-server/server/main.js" 2>/dev/null | head -1 || true)
+if [ -n "$NODE_PID" ]; then
+  CUR_PGID=$(ps -o pgid= -p "$NODE_PID" 2>/dev/null | tr -d ' ')
+  if [ -n "$CUR_PGID" ]; then
+    echo "$CUR_PGID" > /tmp/cloud-browser-server.pgid
+    echo "  recorded process group $CUR_PGID for pid $NODE_PID"
+  fi
+fi
 
 # Verify
 if curl -s http://localhost:3001/api/session/status >/dev/null 2>&1; then

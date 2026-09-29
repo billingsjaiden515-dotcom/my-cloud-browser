@@ -1,0 +1,15 @@
+[Unit]
+Description=Cloud Browser orphan reaper (kill chromium/ffmpeg/Xvfb left behind by a dead server)
+Documentation=file:///root/my-cloud-browser/scripts/cloud-browser-reaper.sh
+# Deliberately no Requires=/After= on the cloud-browser service: this unit must
+# still run when that service is DEAD, crashed or was OOM-killed -- that is the
+# entire point. An in-process reaper cannot run once node is gone.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/cloud-browser-reaper.sh
+# Bounded so a hung process table can never block the next activation.
+TimeoutStartSec=60
+# Never let the reaper's own log grow without bound from unit invocations.
+StandardOutput=journal
+StandardError=journal

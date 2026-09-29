@@ -1,0 +1,15 @@
+[Unit]
+Description=Run the Cloud Browser orphan reaper every 2 minutes
+
+[Timer]
+# First sweep 2 minutes after boot (gives the server time to start), then every
+# 2 minutes while the machine is up.
+OnBootSec=2min
+OnUnitActiveSec=2min
+# Without this, systemd coalesces timers to the same 1-minute time bucket and
+# the effective interval drifts; pin it so a 2-minute cadence really is 2 minutes.
+AccuracySec=15s
+Unit=cloud-browser-reaper.service
+
+[Install]
+WantedBy=timers.target
