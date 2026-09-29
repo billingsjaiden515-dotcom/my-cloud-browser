@@ -171,13 +171,19 @@ export class BrowserSession {
         // the media pipeline, observed as a buffered range that plateaus at
         // buf=60 and stops growing while segments keep downloading.
         // Do not re-add it without first re-checking `df -h /dev/shm`.
+        // NOTE: --js-flags=--max-old-space-size=256 is deliberately ABSENT. It
+        // caps the V8 old-generation heap at 256MB, which bounds memory use but
+        // also bounds YouTube's player: its buffer queue and per-segment metadata
+        // live in JS memory on the renderer main thread, and a tight cap adds GC
+        // pressure exactly where the media pipeline is already CPU-starved.
+        // Let V8 size the heap itself; it is not a fixed constant and the box
+        // has 4GB. Do not re-add a heap cap without measuring real usage.
         // --- YouTube ~45s buffer-drain fix -----------------------------------
         // Under Xvfb with no real window manager Chromium mis-detects occlusion
         // and throttles the renderer; that throttling starves YouTube's player
         // and the buffered range drains even though segments are downloading.
         // These pin the renderer to "active" so the media pipeline keeps its
         // share of CPU and timers are not clamped.
-        '--js-flags=--max-old-space-size=256',
         '--disable-renderer-backgrounding',
         '--disable-backgrounding-occluded-windows',
         `--disable-features=${disableFeatures}`,
