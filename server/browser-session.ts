@@ -1215,11 +1215,15 @@ export class BrowserSession {
     // xdotool — Puppeteer cannot reach UI outside the page viewport.
     if (this.isInChrome(x, y)) {
       console.log(`[Input] click(${x},${y}) ${button} -> CHROME (xdotool, chromeTop=${this.browserChromeTop})`);
+      // Focus moves into the chrome, so subsequent keystrokes belong there too.
+      this.keyboardTarget = 'chrome';
       await this.x11Click(x, y, button);
       return;
     }
     const p = this.toPageCoords(x, y);
     console.log(`[Input] click(${x},${y}) ${button} -> page(${p.x},${p.y})`);
+    // Focus moves into the page, so subsequent keystrokes go through Puppeteer.
+    this.keyboardTarget = 'page';
     // Ensure page has focus before clicking
     await page.bringToFront().catch(() => {});
     try {
@@ -1236,6 +1240,8 @@ export class BrowserSession {
     // Remember which backend the press went to so the matching release is
     // routed to the same one even if the drag crosses the chrome/page boundary.
     this.mousePress = { button, backend: chrome ? 'x11' : 'page' };
+    // Focus follows the press, so keystrokes route to the same region.
+    this.keyboardTarget = chrome ? 'chrome' : 'page';
     if (chrome) {
       await this.x11Click(x, y, button, { press: true });
       return;
@@ -1317,7 +1323,75 @@ export class BrowserSession {
     await page.mouse.wheel({ deltaX, deltaY });
   }
 
+  /**
+   * Which backend owns keyboard input right now.
+   *
+   * Clicks already pick a backend with isInChrome(): the browser chrome (tab
+   * strip, address bar) must go through xdotool because Puppeteer can only
+   * dispatch inside the page viewport. Keyboard had no equivalent, so every
+   * keystroke went to Puppeteer and chrome keystrokes had no way to work at all.
+   * This records the backend the last click used and routes accordingly.
+   */
+  private keyboardTarget: 'page' | 'chrome' = 'page';
+
+  /**
+   * Send a key at the X11 level via xdotool. Used only for the browser chrome.
+   * Requires a window manager for focus: without one the X server assigns focus
+   * to nothing and the keystroke is discarded (see the openbox block in
+   * scripts/vps-restart.sh).
+   */
+  private async x11Key(args: string[]): Promise<void> {
+    if (!process.env.DISPLAY) return;
+    try {
+      const proc = spawn('xdotool', args, { stdio: 'ignore' });
+      proc.on('error', () => { /* xdotool not installed */ });
+      await new Promise<void>((res) => {
+        proc.on('close', () => res());
+        setTimeout(res, 1500);
+      });
+    } catch { /* xdotool unavailable */ }
+  }
+
+  /**
+   * Decide the keyboard backend for this keystroke and log it.
+   *
+   * Prefers the page when the focused element is editable (input/textarea/
+   * contenteditable) or the document itself has focus -- those only respond to
+   * CDP-dispatched input. Everything else (address bar, tab strip, no page
+   * element) goes to xdotool. The last click's backend is the tie-breaker
+   * because the chrome owns focus after a chrome click.
+   */
+  private async resolveKeyboardTarget(): Promise<'page' | 'chrome'> {
+    const page = this.getActivePage();
+    if (!page) return 'chrome';
+    try {
+      const info = await page.evaluate(() => {
+        const el = document.activeElement as (HTMLElement & { isContentEditable?: boolean }) | null;
+        if (!el) return { hasFocus: false, editable: false, tag: 'NONE' };
+        return {
+          hasFocus: document.hasFocus(),
+          editable: !!el.isContentEditable
+            || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT',
+          tag: el.tagName,
+        };
+      });
+      // A focused editable element in a focused document always wins.
+      if (info.editable && info.hasFocus) return 'page';
+      // Otherwise trust where the last click went.
+      return this.keyboardTarget;
+    } catch {
+      // evaluate failed (navigating/closed): fall back to the last click.
+      return this.keyboardTarget;
+    }
+  }
+
   async sendKeyDown(key: string): Promise<void> {
+    const target = await this.resolveKeyboardTarget();
+    console.log(`[Input] keydown '${key}' -> ${target === 'page' ? 'PAGE (puppeteer)' : 'CHROME (xdotool)'}`);
+    if (target === 'chrome') {
+      await this.x11Key(['keydown', key]);
+      return;
+    }
     const page = this.getActivePage();
     if (!page) return;
     await page.bringToFront().catch(() => {});
@@ -1325,6 +1399,12 @@ export class BrowserSession {
   }
 
   async sendKeyUp(key: string): Promise<void> {
+    const target = await this.resolveKeyboardTarget();
+    console.log(`[Input] keyup '${key}' -> ${target === 'page' ? 'PAGE (puppeteer)' : 'CHROME (xdotool)'}`);
+    if (target === 'chrome') {
+      await this.x11Key(['keyup', key]);
+      return;
+    }
     const page = this.getActivePage();
     if (!page) return;
     await page.bringToFront().catch(() => {});
@@ -1332,6 +1412,12 @@ export class BrowserSession {
   }
 
   async sendKeyPress(key: string): Promise<void> {
+    const target = await this.resolveKeyboardTarget();
+    console.log(`[Input] keypress '${key}' -> ${target === 'page' ? 'PAGE (puppeteer)' : 'CHROME (xdotool)'}`);
+    if (target === 'chrome') {
+      await this.x11Key(['key', key]);
+      return;
+    }
     const page = this.getActivePage();
     if (!page) return;
     await page.bringToFront().catch(() => {});
@@ -1339,6 +1425,15 @@ export class BrowserSession {
   }
 
   async typeText(text: string): Promise<void> {
+    const target = await this.resolveKeyboardTarget();
+    console.log(
+      `[Input] type(${text.length} chars) -> ${target === 'page' ? 'PAGE (puppeteer)' : 'CHROME (xdotool)'}`,
+    );
+    if (target === 'chrome') {
+      // xdotool type takes the text as one argument; spaces are preserved.
+      await this.x11Key(['type', '--delay', '20', text]);
+      return;
+    }
     const page = this.getActivePage();
     if (!page) return;
     await page.keyboard.type(text, { delay: 20 });
@@ -1350,6 +1445,13 @@ export class BrowserSession {
    */
   async releaseInputState(): Promise<void> {
     this.mousePress = null;
+    // X11-side keys may still be held down (xdotool keydown), and unlike the
+    // Puppeteer ones these are invisible to page.keyboard.up(). Clear them so a
+    // dropped connection cannot leave a modifier latched in the chrome.
+    for (const k of ['Shift', 'Control', 'Alt', 'Meta']) {
+      await this.x11Key(['keyup', k]).catch(() => {});
+    }
+    this.keyboardTarget = 'page';
     const page = this.getActivePage();
     if (!page) return;
     try {
