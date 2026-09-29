@@ -163,7 +163,14 @@ export class BrowserSession {
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
+        // NOTE: --disable-dev-shm-usage is deliberately ABSENT. It is a Docker
+        // workaround for the 64MB /dev/shm of small containers -- it tells
+        // Chromium to ignore fast RAM-backed shared memory and route it through
+        // disk instead. This host has a 2GB /dev/shm (df -h /dev/shm), so the
+        // flag buys nothing while the disk-backed path adds backpressure into
+        // the media pipeline, observed as a buffered range that plateaus at
+        // buf=60 and stops growing while segments keep downloading.
+        // Do not re-add it without first re-checking `df -h /dev/shm`.
         // --- YouTube ~45s buffer-drain fix -----------------------------------
         // Under Xvfb with no real window manager Chromium mis-detects occlusion
         // and throttles the renderer; that throttling starves YouTube's player
