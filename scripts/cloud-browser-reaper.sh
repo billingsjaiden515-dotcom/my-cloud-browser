@@ -13,7 +13,9 @@
 #     Xvfb is exempt in that case (see the INFRA_RE note): vps-restart.sh starts
 #     it independently, so it is never a descendant of node.
 #   * no server       -> nothing chromium/ffmpeg/Xvfb-like should be alive at
-#     all; kill every match.
+#     all; sweep every match.
+#   * ALWAYS           -> never kill an exempt Chromium helper (EXEMPT_RE), and
+#     never kill a process we cannot identify. Both apply to BOTH kill paths.
 #
 # Implementation notes (these are corrections, not style choices):
 #   * NO pstree: it comes from psmisc, which is not guaranteed to be installed
@@ -41,6 +43,21 @@ set -u
 TARGET_RE="${CB_REAPER_TARGET_RE:-chromium|ffmpeg|Xvfb}"
 NODE_RE="${CB_REAPER_NODE_RE:-node.*dist-server/server/main.js}"
 
+# Process names that are NEVER killed, in either kill path, even when they look
+# orphaned.
+#
+# Chromium's crash handlers detach from the browser deliberately and reparent
+# to init for isolation, so they match `chromium` -- their argv carries the
+# Chromium user-data-dir path -- while belonging to a perfectly healthy LIVE
+# session. They are never descendants of node, so the descendant check cannot
+# save them. Observed in the journal at 02:55:24: KILL orphan pid=178810
+# comm=chrome_crashpad, and the session died two minutes later.
+#
+# Listed as both names because the reported name depends on the platform: Linux
+# truncates comm to 15 characters, which renders `chrome_crashpad_handler` as
+# `chrome_crashpad`, while a full path (e.g. macOS) contains the long form.
+EXEMPT_RE="${CB_REAPER_EXEMPT_RE:-chrome_crashpad|chrome_crashpad_handler}"
+
 ts() { date '+%Y-%m-%dT%H:%M:%S%z'; }
 log() { echo "[reaper $(ts)] $*"; }
 
@@ -61,6 +78,42 @@ fi
 # Select the pid column of every line whose full command matches the ERE.
 pids_matching() {
   printf '%s\n' "$PS_TABLE" | grep -E "$1" 2>/dev/null | awk '{print $1}'
+}
+
+# Decision for one pid, from the last classify_pid call:
+#   VERDICT -- kill | keep | skip
+#   COMM    -- the resolved process name
+#   REASON  -- why, for the log line
+VERDICT="skip"
+COMM=""
+REASON=""
+
+# Decide what may be done to ONE pid. Two hard stops, both of which previously
+# failed to protect anything:
+#
+#   1. IDENTIFY OR REFUSE. `ps -o comm=` returning empty (or the literal '?')
+#      means the process cannot be read: already exiting, a zombie, or in an
+#      unmapped state. The journal showed `comm=?` on pid=178812 immediately
+#      before the session died, and the old code logged that and killed it
+#      anyway -- because `ps ... || echo '?'` produced the '?' and the kill
+#      proceeded regardless. An unidentified process is now never killed.
+#   2. EXEMPT Chromium helpers (EXEMPT_RE), which reparent to init by design.
+classify_pid() {
+  pid="$1"
+  COMM=$(ps -o comm= -p "$pid" 2>/dev/null | head -n 1 \
+          | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+  if [ -z "$COMM" ] || [ "$COMM" = "?" ]; then
+    VERDICT="skip"
+    REASON="cannot identify (comm='$COMM') -- refusing to kill"
+    return
+  fi
+  if printf '%s\n' "$COMM" | grep -qE "$EXEMPT_RE"; then
+    VERDICT="keep"
+    REASON="exempt Chromium helper comm=$COMM"
+    return
+  fi
+  VERDICT="kill"
+  REASON="comm=$COMM"
 }
 
 NODE_PIDS=$(pids_matching "$NODE_RE")
@@ -84,9 +137,28 @@ if [ -z "$NODE_PIDS" ]; then
     log "no node main process and no chromium/ffmpeg/Xvfb running (clean)"
     exit 0
   fi
-  log "NO node main process running; killing $(echo "$TARGET_PIDS" | wc -w | tr -d ' ') leftover(s): $(echo "$TARGET_PIDS" | tr '\n' ' ')"
-  pkill -9 -f "$TARGET_RE" 2>/dev/null || true
-  log "kill issued"
+  log "NO node main process running; sweeping $(echo "$TARGET_PIDS" | wc -w | tr -d ' ') candidate(s): $(echo "$TARGET_PIDS" | tr '\n' ' ')"
+
+  # This branch used to be a single blind `pkill -9 -f`, which by construction
+  # could honour neither the helper exemption nor the identify-or-refuse guard.
+  # It is now a per-pid loop, so a crash handler -- and any process ps cannot
+  # read -- survives a sweep that happens to run with the server down.
+  n_killed=0; n_exempt=0; n_skipped=0
+  for pid in $TARGET_PIDS; do
+    classify_pid "$pid"
+    if [ "$VERDICT" = "keep" ]; then
+      log "KEEP pid=$pid $REASON (matched target pattern, but must not be killed)"
+      n_exempt=$((n_exempt + 1))
+    elif [ "$VERDICT" = "skip" ]; then
+      log "SKIP pid=$pid $REASON"
+      n_skipped=$((n_skipped + 1))
+    else
+      log "KILL leftover pid=$pid $REASON"
+      kill -9 "$pid" 2>/dev/null || true
+      n_killed=$((n_killed + 1))
+    fi
+  done
+  log "sweep done: $n_killed killed, $n_exempt exempt, $n_skipped unidentified (not killed)"
   exit 0
 fi
 
@@ -141,17 +213,34 @@ fi
 
 killed=0
 kept=0
+exempt=0
+skipped=0
 for pid in $TARGET_PIDS; do
   if grep -qx "$pid" "$LIVE" 2>/dev/null; then
     kept=$((kept + 1))
     continue
   fi
-  comm=$(ps -o comm= -p "$pid" 2>/dev/null || echo '?')
+  # Not a descendant of node, so it looks like an orphan candidate -- but
+  # classify_pid decides whether it may ACTUALLY be killed: it refuses exempt
+  # Chromium helpers and anything ps cannot identify. The old code read
+  # `comm=$(ps ... || echo '?')` and then killed unconditionally, which is how a
+  # chrome_crashpad and a comm=? process both got reaped from a live session.
+  classify_pid "$pid"
+  if [ "$VERDICT" = "keep" ]; then
+    log "KEEP pid=$pid $REASON (matched target pattern, but must not be killed)"
+    exempt=$((exempt + 1))
+    continue
+  fi
+  if [ "$VERDICT" = "skip" ]; then
+    log "SKIP pid=$pid $REASON (matched target pattern, but not killed)"
+    skipped=$((skipped + 1))
+    continue
+  fi
   age=$(ps -o etime= -p "$pid" 2>/dev/null | tr -d ' ')
-  log "KILL orphan pid=$pid comm=${comm:-?} age=${age:-?} (not a descendant of node [$NODE_PIDS])"
+  log "KILL orphan pid=$pid $REASON age=${age:-?} (not a descendant of node [$NODE_PIDS])"
   kill -9 "$pid" 2>/dev/null || true
   killed=$((killed + 1))
 done
 
-log "sweep done: $killed killed, $kept kept (descendants of the live server)"
+log "sweep done: $killed killed, $kept kept (descendants), $exempt exempt helpers, $skipped unidentified (not killed)"
 exit 0
