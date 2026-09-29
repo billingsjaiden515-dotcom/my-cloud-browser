@@ -256,11 +256,71 @@ export class BrowserSession {
     return this.pageIdMap.get(page)!;
   }
 
+  /**
+   * Make the page report AV1 as unsupported, so YouTube negotiates VP9/H.264.
+   *
+   * Why: this VPS has 2 vCores and no hardware decode, so AV1 is software
+   * decoded and cannot keep up in real time. Diagnosis on this box: old H.264
+   * videos (e.g. dQw4w9WgXcQ, 2009) play past 100s with no cap, while modern
+   * AV1 videos (codec string av01.0.00M.08, seen in the MSE probe log) stop at
+   * ~45s. YouTube sees the slow decode, caps the MSE buffer at 60s, then tears
+   * the player down. Reporting av01 as unsupported makes it pick a codec this
+   * box can actually decode.
+   *
+   * Installed with evaluateOnNewDocument so it is in place for the very first
+   * document, before any site script runs -- YouTube reads codec support while
+   * its player boots, so a post-navigation injection would come too late.
+   *
+   * Scope: only strings containing "av01" are affected. "avc1" (H.264) and
+   * "vp09" (VP9) do not contain that substring, so they pass through untouched.
+   *
+   * Trade-off worth stating plainly: a site whose ONLY renditions are AV1 will
+   * not play here. Given AV1 is already undecodable in real time on this box,
+   * such a video would stall and fail anyway -- it just fails differently now.
+   * Set AV1_SHIM=0 to disable if that ever needs testing.
+   */
+  private async installAv1Shim(page: Page): Promise<void> {
+    if (process.env.AV1_SHIM === '0') return;
+    try {
+      await page.evaluateOnNewDocument(() => {
+        // MediaSource.isTypeSupported: YouTube's primary capability probe.
+        const origIsTypeSupported = MediaSource.isTypeSupported.bind(MediaSource);
+        MediaSource.isTypeSupported = (mime: string) => {
+          if (/av01/i.test(mime)) return false;
+          return origIsTypeSupported(mime);
+        };
+
+        // canPlayType: the same probe for plain <video> playback. Returning ''
+        // (empty string) is the spec's answer for "cannot play this type".
+        const origCanPlay = HTMLMediaElement.prototype.canPlayType;
+        HTMLMediaElement.prototype.canPlayType = function (mime: string) {
+          if (/av01/i.test(mime)) return '';
+          return origCanPlay.call(this, mime);
+        };
+
+        // Last-resort guard: if something reaches addSourceBuffer with av01
+        // anyway, fail loudly and immediately rather than attaching a
+        // SourceBuffer that can never keep up with real time.
+        const origAddSourceBuffer = MediaSource.prototype.addSourceBuffer;
+        MediaSource.prototype.addSourceBuffer = function (mime: string) {
+          if (/av01/i.test(mime)) {
+            throw new DOMException('AV1 unsupported on this device', 'NotSupportedError');
+          }
+          return origAddSourceBuffer.call(this, mime);
+        };
+      });
+    } catch { /* shim is best-effort; never block session startup */ }
+  }
+
   private async setupPage(page: Page): Promise<void> {
     // Install MediaSource/SourceBuffer instrumentation BEFORE any navigation:
     // evaluateOnNewDocument only applies to documents created after it is
     // called, and YouTube creates its SourceBuffers on the first page load.
     await this.installMseProbe(page);
+    // Then the AV1 shim, also before any navigation, so YouTube negotiates a
+    // codec this box can decode. installMseProbe patches addSourceBuffer too;
+    // the two compose, since each wraps the previous rather than replacing it.
+    await this.installAv1Shim(page);
     // In headful/X11 mode, do NOT set an emulated viewport: CDP emulation makes
     // window.innerWidth/innerHeight report the emulated size (1280x800) instead
     // of the real page content area (~1280x720 after the ~80px chrome), which
