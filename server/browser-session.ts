@@ -140,6 +140,18 @@ export class BrowserSession {
     const isHeadful = !!process.env.DISPLAY;
     const display = process.env.DISPLAY || ':99';
     
+    // Chromium reads --disable-features ONCE: when the switch appears twice on
+    // the command line only the first value is parsed and the second is
+    // silently discarded. Build a single combined value so both settings take
+    // effect instead of one silently canceling the other.
+    const disableFeatures = [
+      // Under Xvfb there is no window manager, so Chromium can conclude that
+      // the only window on the screen is occluded and throttle the renderer
+      // behind it -- which starves a media pipeline such as YouTube's.
+      'CalculateNativeWinOcclusion',
+      ...(isHeadful ? ['SuppressUnsupportedFlagWarning'] : []),
+    ].join(',');
+
     this.browser = await puppeteer.launch({
       executablePath,
       headless: isHeadful ? false : true,
@@ -152,6 +164,16 @@ export class BrowserSession {
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
+        // --- YouTube ~45s buffer-drain fix -----------------------------------
+        // Under Xvfb with no real window manager Chromium mis-detects occlusion
+        // and throttles the renderer; that throttling starves YouTube's player
+        // and the buffered range drains even though segments are downloading.
+        // These pin the renderer to "active" so the media pipeline keeps its
+        // share of CPU and timers are not clamped.
+        '--js-flags=--max-old-space-size=256',
+        '--disable-renderer-backgrounding',
+        '--disable-backgrounding-occluded-windows',
+        `--disable-features=${disableFeatures}`,
         '--disable-gpu',
         '--no-first-run',
         '--no-default-browser-check',
@@ -167,10 +189,11 @@ export class BrowserSession {
         // +80 for Chromium's tab strip / address bar so the PAGE content area
         // remains the full viewport size (chrome is drawn on top of the extra 80px).
         `--window-size=${VIEWPORT_WIDTH},${VIEWPORT_HEIGHT + 80}`,
-        // Show tab strip in headful mode
+        // Show tab strip in headful mode. SuppressUnsupportedFlagWarning now
+        // rides along in `disableFeatures` above -- it must NOT be repeated
+        // here as a second --disable-features, or only one of the two survives.
         ...(isHeadful ? [
           '--enable-features=TouchpadOverscrollHistoryNavigation',
-          '--disable-features=SuppressUnsupportedFlagWarning',
         ] : []),
       ],
     });
