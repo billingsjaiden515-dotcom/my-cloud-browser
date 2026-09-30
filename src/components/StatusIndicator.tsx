@@ -8,6 +8,9 @@ interface StatusIndicatorProps {
 const STATE_CONFIG = {
   disconnected: { dot: 'bg-gray-500', text: 'text-gray-400', label: 'Disconnected' },
   connecting:   { dot: 'bg-yellow-400 animate-pulse', text: 'text-yellow-400', label: 'Connecting' },
+  // Deliberately NOT styled as an error: the session is usually still alive and
+  // we are only retrying the media path.
+  reconnecting: { dot: 'bg-yellow-400 animate-pulse', text: 'text-yellow-400', label: 'Reconnecting' },
   connected:    { dot: 'bg-green-400', text: 'text-green-400', label: 'Connected' },
   failed:       { dot: 'bg-red-400', text: 'text-red-400', label: 'Failed' },
 } as const;

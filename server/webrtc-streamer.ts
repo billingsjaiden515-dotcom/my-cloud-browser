@@ -222,13 +222,26 @@ export class WebRTCStreamer {
 
     this.pc.onconnectionstatechange = () => {
       const state = this.pc?.connectionState;
-      console.log(`[WebRTC] Connection state: ${state}`);
+      const at = new Date().toISOString().slice(11, 23);
+      console.log(`[WebRTC] Connection state: ${state} at ${at}`);
       // Notify session manager so it can cancel the timeout when connected
       if (this.connectionStateCallback) {
         this.connectionStateCallback(state ?? 'unknown');
       }
-      if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+      // 'disconnected' is NOT terminal: ICE drops transiently all the time (a
+      // CPU-starved 2-vCore host stalling its own media pipeline is the common
+      // cause) and the state can return to 'connected' on its own. Stopping the
+      // stream here is what made the client see a dead session during a
+      // recoverable blip. Only 'failed' and 'closed' stop the stream, and
+      // 'closed' is our own deliberate teardown.
+      if (state === 'failed' || state === 'closed') {
+        console.log(`[WebRTC] Stopping stream (terminal state: ${state})`);
         this.streaming = false;
+      } else if (state === 'disconnected') {
+        console.warn(
+          `[WebRTC] Connection temporarily ${state} at ${at} — keeping the stream alive; ` +
+          'the client is polling and attempting ICE restart',
+        );
       }
     };
 

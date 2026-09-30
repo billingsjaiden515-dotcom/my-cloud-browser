@@ -6,11 +6,13 @@ import type { SignalMessage, OfferPayload } from '../src/shared/types.js';
 // network drop or an accidental reload should not destroy the remote browser,
 // so teardown waits for this window and is cancelled if a client comes back.
 //
-// This is the fix for the biggest orphan source: once WebRTC connects,
-// cancelSessionTimeout() clears the only cleanup path, so a closed tab left a
-// whole session (Chromium + the x11grab/VP8/Opus ffmpeg processes) running
-// until the server was restarted.
-const DISCONNECT_GRACE_MS = Number(process.env.DISCONNECT_GRACE_MS) || 30_000;
+// This is the safety net for client-side reconnection: a client whose ICE
+// dropped is still polling this session, and if we tore the session down the
+// instant its socket blipped, every recoverable blip would become a permanent
+// loss. It must comfortably exceed the client's own ICE grace period (5s) plus
+// its reconnection attempts, so the server never gives up before the client has
+// finished trying. 60s gives ~10x that margin.
+const DISCONNECT_GRACE_MS = Number(process.env.DISCONNECT_GRACE_MS) || 60_000;
 
 export class SignalingServer {
   private wss: WebSocketServer;

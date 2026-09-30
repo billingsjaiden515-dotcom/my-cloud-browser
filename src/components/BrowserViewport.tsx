@@ -267,6 +267,17 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
                 </p>
               </>
             )}
+            {connectionState === 'reconnecting' && (
+              <>
+                <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/10 mb-2">
+                  <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                </div>
+                {/* Deliberately NOT "session ended": the session is very likely
+                    still alive server-side. We are only retrying the media path. */}
+                <p className="text-yellow-400 font-medium">Reconnecting…</p>
+                <p className="text-xs text-muted/60">The remote browser is still running — retrying the video connection</p>
+              </>
+            )}
             {connectionState === 'failed' && (
               <>
                 <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-red-500/10 mb-2">

@@ -16,6 +16,10 @@ export type ConnectionState =
   | 'disconnected'
   | 'connecting'
   | 'connected'
+  // Transient: ICE dropped and we are attempting recovery (grace period elapsed
+  // or 'failed'). The session may well still be alive server-side, so the UI
+  // must NOT claim the session ended while in this state.
+  | 'reconnecting'
   | 'failed';
 
 export interface RemoteBrowserApi {
@@ -97,6 +101,42 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
   // Set when the USER intentionally stops the session, so the poll loop can
   // distinguish "user clicked Stop" from "session died unexpectedly".
   const intentionalStopRef = useRef(false);
+  // ── Reconnection state ──────────────────────────────────────────────────────
+  // A brief ICE drop is NOT a dead session. ICE 'disconnected' routinely recovers
+  // on its own within seconds, and the previous code surfaced the reconnect
+  // screen as soon as the server reported the session gone — so a momentary
+  // blip on a 2-vCore VPS (which is CPU-starved and stalls its media pipeline)
+  // threw the user out of a session that was still perfectly alive.
+  //
+  // `disconnected` -> wait ICE_GRACE_MS, then if still not connected, try an
+  //                  ICE restart.
+  // `failed`       -> skip the wait, attempt the restart immediately.
+  // `connected`    -> cancel any pending grace timer and any restart attempts.
+  //
+  // "Session ended" is shown ONLY when the server says the session is gone
+  // (404 / active:false / alive:false) or when a restart actually fails.
+  const ICE_GRACE_MS = Number(import.meta.env?.VITE_ICE_GRACE_MS ?? 5000);
+  const iceGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const restartAttemptRef = useRef(0);
+  const MAX_RESTART_ATTEMPTS = 3;
+  // How many CONSECUTIVE polls must report the session dead while we are
+  // reconnecting before we believe it. One poll can race a server restart or a
+  // status blip; two agreeing polls (3s apart) is a real signal.
+  const DEAD_CONFIRM_POLLS = 2;
+  const consecutiveDeadRef = useRef(0);
+  const [reconnecting, setReconnecting] = useState(false);
+  // Mirrors of state for use inside the 1.5s poll closure, which is created once
+  // and would otherwise capture stale values.
+  const connectionStateRef = useRef<ConnectionState>(connectionState);
+  connectionStateRef.current = connectionState;
+  const reconnectingRef = useRef(reconnecting);
+  reconnectingRef.current = reconnecting;
+  const clearIceGraceTimer = useCallback(() => {
+    if (iceGraceTimerRef.current) {
+      clearTimeout(iceGraceTimerRef.current);
+      iceGraceTimerRef.current = null;
+    }
+  }, []);
   const clearPollLoop = useCallback((reason: string) => {
     if (pollTimerRef.current) {
       clearInterval(pollTimerRef.current);
@@ -113,19 +153,51 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
     const poll = async () => {
       try {
         const r = await fetch(`${API_BASE}/api/session/status?sessionId=${sid}`);
-        if (!r.ok) return;
+        if (!r.ok) {
+          // An explicit 404 is the ONLY status-level proof the session is gone.
+          // A transient 5xx / network error is not, so it must not end anything.
+          console.log(`[Poll] status HTTP ${r.status} for ${sid} at ${new Date().toISOString().slice(11, 23)}`);
+          if (r.status === 404 && !intentionalStopRef.current) {
+            setConnectionState('failed');
+            setError('Session ended — the server no longer has this session. Click Start Browser to reconnect.');
+            clearPollLoop('status 404 — session gone server-side');
+          }
+          return;
+        }
         const d = await r.json();
+        // Log the poll result so the exact moment of a drop is visible in the
+        // browser console alongside the ICE transitions.
+        console.log(
+          `[Poll] ${sid} at ${new Date().toISOString().slice(11, 23)}: active=${d.active} alive=${d.alive} ` +
+          `connection=${connectionStateRef.current} reconnecting=${reconnectingRef.current}`,
+        );
         if (d.active === false || d.alive === false) {
-          // Session gone (orphaned/stopped) or its browser target died
-          // (crash/OOM). If the user didn't stop it intentionally, surface a
-          // clear reconnect state instead of failing silently.
+          // The SERVER says the session is really gone (stopped by its disconnect
+          // grace timer, or the browser target crashed / was OOM-killed). Only
+          // now is "Session ended" truthful. If we are mid-reconnection, still
+          // allow a couple of polls to be sure before declaring it dead.
+          if (reconnectingRef.current) {
+            consecutiveDeadRef.current += 1;
+            console.warn(
+              `[Poll] session reported dead while reconnecting ` +
+              `(${consecutiveDeadRef.current}/${DEAD_CONFIRM_POLLS})`,
+            );
+            if (consecutiveDeadRef.current < DEAD_CONFIRM_POLLS) return;
+          }
           if (!intentionalStopRef.current) {
             setConnectionState('failed');
-            setError('Session ended unexpectedly — click Start Browser to reconnect.');
+            setReconnecting(false);
+            clearIceGraceTimer();
+            setError(
+              d.alive === false
+                ? 'Session ended — the remote browser stopped responding. Click Start Browser to reconnect.'
+                : 'Session ended — the server closed this session. Click Start Browser to reconnect.',
+            );
           }
           clearPollLoop(d.alive === false ? 'browser target died' : 'status active=false');
           return;
         }
+        consecutiveDeadRef.current = 0;
         if (d.url !== undefined) setCurrentUrl(prev => (prev === d.url ? prev : d.url));
         if (d.title !== undefined) setCurrentTitle(prev => (prev === d.title ? prev : d.title));
         // Only update when values actually changed — a new object identity
@@ -165,25 +237,90 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
 
     console.log('[Client] RTCPeerConnection created with ICE servers:', JSON.stringify(iceServers));
 
+    // Try to recover a dropped connection WITHOUT tearing the session down.
+    // restartIce() re-gathers candidates on the existing peer connection, which
+    // is far cheaper than a full reconnect and is enough for the transient
+    // failures seen here. If it is unavailable, the server-side session status
+    // poll remains the source of truth: if the session is genuinely gone we get
+    // active:false and only then do we surface "Session ended".
+    const attemptRecovery = (why: string) => {
+      if (intentionalStopRef.current) return;
+      if (restartAttemptRef.current >= MAX_RESTART_ATTEMPTS) {
+        console.warn(`[Client] Reconnection gave up after ${restartAttemptRef.current} attempts (${why})`);
+        setReconnecting(false);
+        return;
+      }
+      const attempt = ++restartAttemptRef.current;
+      console.log(`[Client] Reconnection attempt ${attempt}/${MAX_RESTART_ATTEMPTS} (${why})`);
+      setReconnecting(true);
+      try {
+        pc.restartIce();
+        console.log('[Client] pc.restartIce() called — waiting for the connection to come back');
+      } catch (e) {
+        console.warn('[Client] restartIce() unavailable or threw:', e);
+      }
+    };
+
     pc.onconnectionstatechange = () => {
       const state = pc.connectionState;
-      console.log('[Client] WebRTC connection state:', state);
+      const at = new Date().toISOString().slice(11, 23);
+      console.log(`[Client] WebRTC connection state: ${state} at ${at} (ice=${pc.iceConnectionState}, session=${sessionIdRef.current ?? '?'})`);
       if (state === 'connected') {
+        // Recovery worked (or was never needed): reset the retry budget and
+        // cancel any pending grace timer so a later 'disconnected' starts fresh.
+        clearIceGraceTimer();
+        if (restartAttemptRef.current > 0) {
+          console.log(`[Client] Connection recovered after ${restartAttemptRef.current} attempt(s)`);
+        }
+        restartAttemptRef.current = 0;
+        setReconnecting(false);
         setConnectionState('connected');
-      } else if (state === 'failed') {
-        setConnectionState('failed');
-        setError('WebRTC connection failed');
-      } else if (state === 'disconnected' || state === 'closed') {
+        return;
+      }
+
+      if (state === 'failed') {
+        // Terminal for this pc: do not wait, try to recover immediately.
+        clearIceGraceTimer();
+        setConnectionState('reconnecting');
+        attemptRecovery('connection failed');
+        return;
+      }
+
+      if (state === 'disconnected') {
+        // NOT an error. ICE recovers by itself very often; wait before doing
+        // anything at all. This is the case that used to end the session.
         setConnectionState('disconnected');
+        clearIceGraceTimer();
+        console.log(`[Client] ICE disconnected — waiting ${ICE_GRACE_MS}ms before considering recovery`);
+        iceGraceTimerRef.current = setTimeout(() => {
+          iceGraceTimerRef.current = null;
+          // Re-check: the connection may have come back on its own during the
+          // grace period, in which case the 'connected' handler already ran.
+          if (pc.connectionState === 'connected' || intentionalStopRef.current) {
+            console.log('[Client] Connection recovered on its own during the grace period');
+            return;
+          }
+          setConnectionState('reconnecting');
+          attemptRecovery('still disconnected after grace period');
+        }, ICE_GRACE_MS);
+        return;
+      }
+
+      if (state === 'closed') {
+        // The pc was closed deliberately (unmount/stop). Not a failure.
+        clearIceGraceTimer();
+        console.log('[Client] Peer connection closed');
       }
     };
 
     pc.oniceconnectionstatechange = () => {
-      console.log('[Client] ICE connection state:', pc.iceConnectionState);
+      const at = new Date().toISOString().slice(11, 23);
+      console.log(`[Client] ICE connection state: ${pc.iceConnectionState} at ${at} (signaling=${pc.signalingState}, session=${sid})`);
     };
 
     pc.onicegatheringstatechange = () => {
-      console.log('[Client] ICE gathering state:', pc.iceGatheringState);
+      const at = new Date().toISOString().slice(11, 23);
+      console.log(`[Client] ICE gathering state: ${pc.iceGatheringState} at ${at} (session=${sid})`);
     };
 
     pc.ontrack = (event: RTCTrackEvent) => {
@@ -246,6 +383,13 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
     // when a prior session was never cleanly stopped.
     stopPolling();
     intentionalStopRef.current = false; // new session — unexpected deaths should surface again
+    // Fresh reconnection budget for the new session: otherwise a previous
+    // session's exhausted retry counter would make the first blip here look
+    // like an unrecoverable one.
+    clearIceGraceTimer();
+    restartAttemptRef.current = 0;
+    consecutiveDeadRef.current = 0;
+    setReconnecting(false);
     setError(null);
     setConnectionState('connecting');
 
