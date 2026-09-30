@@ -1,4 +1,4 @@
-import puppeteer, { Browser, Page, CDPSession } from 'puppeteer-core';
+import puppeteer, { Browser, Page } from 'puppeteer-core';
 import { spawn, ChildProcess } from 'child_process';
 import { getChromiumPath } from './browser-finder.js';
 import { spawnTracked, killChild, registerExternalChild } from './process-reaper.js';
@@ -31,7 +31,10 @@ export class BrowserSession {
   private activePageId: string | null = null;
   private screencastActive = false;
   private frameCallback: FrameCallback | null = null;
-  private cdpSession: CDPSession | null = null;
+  // NOTE: a former `cdpSession: CDPSession | null` field was removed. It was
+  // never assigned or read anywhere -- no createCDPSession, no .send(), no CDP
+  // command in this file or any other. Capture is ffmpeg x11grab and input is
+  // page.mouse/page.keyboard, so nothing ever needed a raw CDP channel.
   private browserType: string;
   private viewportWidth = VIEWPORT_WIDTH;
   private viewportHeight = VIEWPORT_HEIGHT;
@@ -152,69 +155,111 @@ export class BrowserSession {
       ...(isHeadful ? ['SuppressUnsupportedFlagWarning'] : []),
     ].join(',');
 
-    this.browser = await puppeteer.launch({
-      executablePath,
-      headless: isHeadful ? false : true,
-      // Critical: without this, Puppeteer applies its default 800x600 CDP
-      // device-metrics override, and window.innerWidth/innerHeight report the
-      // EMULATED size instead of the real window's content area — which broke
-      // measureChromeGeometry()'s chrome-offset math (chromeTop=280).
-      defaultViewport: null,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        // NOTE: --disable-dev-shm-usage is deliberately ABSENT. It is a Docker
-        // workaround for the 64MB /dev/shm of small containers -- it tells
-        // Chromium to ignore fast RAM-backed shared memory and route it through
-        // disk instead. This host has a 2GB /dev/shm (df -h /dev/shm), so the
-        // flag buys nothing while the disk-backed path adds backpressure into
-        // the media pipeline, observed as a buffered range that plateaus at
-        // buf=60 and stops growing while segments keep downloading.
-        // Do not re-add it without first re-checking `df -h /dev/shm`.
-        // NOTE: --js-flags=--max-old-space-size=256 is deliberately ABSENT. It
-        // caps the V8 old-generation heap at 256MB, which bounds memory use but
-        // also bounds YouTube's player: its buffer queue and per-segment metadata
-        // live in JS memory on the renderer main thread, and a tight cap adds GC
-        // pressure exactly where the media pipeline is already CPU-starved.
-        // Let V8 size the heap itself; it is not a fixed constant and the box
-        // has 4GB. Do not re-add a heap cap without measuring real usage.
-        // --- YouTube ~45s buffer-drain fix -----------------------------------
-        // Under Xvfb with no real window manager Chromium mis-detects occlusion
-        // and throttles the renderer; that throttling starves YouTube's player
-        // and the buffered range drains even though segments are downloading.
-        // These pin the renderer to "active" so the media pipeline keeps its
-        // share of CPU and timers are not clamped.
-        '--disable-renderer-backgrounding',
-        '--disable-backgrounding-occluded-windows',
-        `--disable-features=${disableFeatures}`,
-        '--disable-gpu',
-        '--no-first-run',
-        '--no-default-browser-check',
-        '--disable-extensions',
-        '--disable-background-networking',
-        '--disable-sync',
-        '--disable-translate',
-        '--metrics-recording-only',
-        '--disable-infobars',
-        '--disable-notifications',
-        '--disable-popup-blocking',
-        `--window-position=0,0`,
-        // +80 for Chromium's tab strip / address bar so the PAGE content area
-        // remains the full viewport size (chrome is drawn on top of the extra 80px).
-        `--window-size=${VIEWPORT_WIDTH},${VIEWPORT_HEIGHT + 80}`,
-        // Show tab strip in headful mode. SuppressUnsupportedFlagWarning now
-        // rides along in `disableFeatures` above -- it must NOT be repeated
-        // here as a second --disable-features, or only one of the two survives.
-        ...(isHeadful ? [
-          '--enable-features=TouchpadOverscrollHistoryNavigation',
-        ] : []),
-      ],
-    });
+    // ── Launch options: per-browser ───────────────────────────────────────
+    // Chromium and Firefox get deliberately different options. Firefox runs
+    // over WebDriver BiDi, not CDP, and FirefoxLauncher appends `args`
+    // VERBATIM to the command line -- it does not filter or translate them --
+    // so handing Firefox Chromium's --disable-* / --no-sandbox flags would feed
+    // Gecko flags it cannot parse. Chromium's option object below is unchanged.
+    //
+    // `browser: 'firefox'` (NOT `product: 'firefox'`): in puppeteer-core 25.5.0
+    // `product` does not exist in LaunchOptions at all -- zero occurrences in
+    // the public type definitions. The supported key is `browser`, typed
+    // SupportedBrowser = 'chrome' | 'firefox'. Passing `product` would be
+    // silently ignored and Chromium launched instead, which is both wrong and
+    // indistinguishable from a Firefox bug at runtime.
+    if (this.browserType === 'firefox') {
+      this.browser = await puppeteer.launch({
+        browser: 'firefox',
+        executablePath,
+        headless: isHeadful ? false : true,
+        // Same rationale as Chromium: without null, Puppeteer applies its own
+        // viewport override and window.innerWidth/innerHeight stop reporting
+        // the real window content area, which is what measureChromeGeometry()
+        // depends on.
+        defaultViewport: null,
+        // Firefox rejects Chromium's command-line flags -- see above. Window
+        // SIZE/POSITION are intentionally not forced: Firefox honours
+        // --window-* inconsistently headful, and the geometry is measured from
+        // the real window by xdotool in measureChromeGeometry() anyway, so an
+        // unforced window is measured correctly rather than assumed. These
+        // prefs are the BiDi equivalent of Chromium's --no-first-run /
+        // --no-default-browser-check / --disable-background-networking.
+        args: [],
+        extraPrefsFirefox: {
+          'browser.shell.checkDefaultBrowser': false,
+          'browser.startup.homepage_override.mstone': 'ignore',
+          'datareporting.policy.dataSubmissionEnabled': false,
+          'toolkit.telemetry.enabled': false,
+        },
+      });
+    } else {
+        this.browser = await puppeteer.launch({
+          executablePath,
+          headless: isHeadful ? false : true,
+          // Critical: without this, Puppeteer applies its default 800x600 CDP
+          // device-metrics override, and window.innerWidth/innerHeight report the
+          // EMULATED size instead of the real window's content area — which broke
+          // measureChromeGeometry()'s chrome-offset math (chromeTop=280).
+        defaultViewport: null,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          // NOTE: --disable-dev-shm-usage is deliberately ABSENT. It is a Docker
+          // workaround for the 64MB /dev/shm of small containers -- it tells
+          // Chromium to ignore fast RAM-backed shared memory and route it through
+          // disk instead. This host has a 2GB /dev/shm (df -h /dev/shm), so the
+          // flag buys nothing while the disk-backed path adds backpressure into
+          // the media pipeline, observed as a buffered range that plateaus at
+          // buf=60 and stops growing while segments keep downloading.
+          // Do not re-add it without first re-checking `df -h /dev/shm`.
+          // NOTE: --js-flags=--max-old-space-size=256 is deliberately ABSENT. It
+          // caps the V8 old-generation heap at 256MB, which bounds memory use but
+          // also bounds YouTube's player: its buffer queue and per-segment metadata
+          // live in JS memory on the renderer main thread, and a tight cap adds GC
+          // pressure exactly where the media pipeline is already CPU-starved.
+          // Let V8 size the heap itself; it is not a fixed constant and the box
+          // has 4GB. Do not re-add a heap cap without measuring real usage.
+          // --- YouTube ~45s buffer-drain fix -----------------------------------
+          // Under Xvfb with no real window manager Chromium mis-detects occlusion
+          // and throttles the renderer; that throttling starves YouTube's player
+          // and the buffered range drains even though segments are downloading.
+          // These pin the renderer to "active" so the media pipeline keeps its
+          // share of CPU and timers are not clamped.
+          '--disable-renderer-backgrounding',
+          '--disable-backgrounding-occluded-windows',
+          `--disable-features=${disableFeatures}`,
+          '--disable-gpu',
+          '--no-first-run',
+          '--no-default-browser-check',
+          '--disable-extensions',
+          '--disable-background-networking',
+          '--disable-sync',
+          '--disable-translate',
+          '--metrics-recording-only',
+          '--disable-infobars',
+          '--disable-notifications',
+          '--disable-popup-blocking',
+          `--window-position=0,0`,
+          // +80 for Chromium's tab strip / address bar so the PAGE content area
+          // remains the full viewport size (chrome is drawn on top of the extra 80px).
+          `--window-size=${VIEWPORT_WIDTH},${VIEWPORT_HEIGHT + 80}`,
+          // Show tab strip in headful mode. SuppressUnsupportedFlagWarning now
+          // rides along in `disableFeatures` above -- it must NOT be repeated
+          // here as a second --disable-features, or only one of the two survives.
+          ...(isHeadful ? [
+            '--enable-features=TouchpadOverscrollHistoryNavigation',
+          ] : []),
+        ],
+      });
+    }
 
-    // Track Chromium itself so teardown can force-kill it. A graceful CDP close
-    // can fail or hang, and a hung browser keeps its zygote and renderers alive.
+    // Track the browser process itself so teardown can force-kill it. A
+    // graceful close can fail or hang, and a hung browser keeps its content
+    // processes alive. Labelled by browserType rather than a hardcoded
+    // 'chromium' so the reaper matches the right process family.
     const browserProc = this.browser.process();
-    if (browserProc) registerExternalChild(browserProc, 'chromium');
+    if (browserProc) registerExternalChild(browserProc, this.browserType);
 
     const pages = await this.browser.pages();
     const page = pages[0] || (await this.browser.newPage());
@@ -389,90 +434,113 @@ export class BrowserSession {
     // so playback failures look "silent". Errors, failed requests and non-2xx
     // media responses are always logged; routine page noise is gated behind
     // PAGE_DEBUG=0 for quieter runs.
-    const verbose = process.env.PAGE_DEBUG !== '0';
-    const ts = () => new Date().toISOString().slice(11, 23);
+    // --- Chromium only: CDP-network events with NO BiDi equivalent ---------
+    // The instrumentation above needs page 'request', 'response',
+    // 'requestfailed', 'requestfinished', 'framenavigated', 'console' and
+    // 'pageerror'. Firefox runs over WebDriver BiDi, which ships no Network
+    // module at all: in puppeteer-core 25.5.0 the ONLY PageEvent BiDi ever
+    // emits is 'close' (bidi/Page.js:165). The rest are never emitted.
+    // Registering them is not an error -- it is SILENT: no throw, the listener
+    // simply never fires, and the log goes quiet for the exact failures these
+    // listeners were written to catch. So they are gated on browserType rather
+    // than left silently registered, which makes the absence explicit in the
+    // source instead of looking like a Firefox bug.
+    //
+    // Known accepted loss for Firefox v1: no segment/media/nav/console
+    // tracing. A page.evaluate() based replacement was considered and
+    // deliberately rejected as out of scope for this commit.
+    //
+    // Crash detection is UNAFFECTED: it comes from browser.on('disconnected')
+    // and page.on('close'), both emitted by BiDi. Verified live --
+    // scripts/firefox-lifecycle-test.mjs SIGKILLs firefox and 'disconnected'
+    // fires ~250ms later, so markDead() runs and /api/session/status correctly
+    // reports alive:false.
+    if (this.browserType === 'chromium') {
+      const verbose = process.env.PAGE_DEBUG !== '0';
+      const ts = () => new Date().toISOString().slice(11, 23);
 
-    page.on('console', (msg) => {
-      const type = msg.type();
-      const text = msg.text();
-      if (type === 'error' || type === 'warn' || type === 'assert') {
-        console.error(`[Page:console:${type}] ${ts()} ${text}`);
-      } else if (verbose) {
-        console.log(`[Page:console:${type}] ${ts()} ${text}`);
-      }
-    });
+      page.on('console', (msg) => {
+        const type = msg.type();
+        const text = msg.text();
+        if (type === 'error' || type === 'warn' || type === 'assert') {
+          console.error(`[Page:console:${type}] ${ts()} ${text}`);
+        } else if (verbose) {
+          console.log(`[Page:console:${type}] ${ts()} ${text}`);
+        }
+      });
 
-    page.on('pageerror', (err: unknown) => {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`[Page:pageerror] ${ts()} ${message}`);
-    });
+      page.on('pageerror', (err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[Page:pageerror] ${ts()} ${message}`);
+      });
 
-    // Segment-fetch lifecycle tracing. The observed signature was a frozen
-    // buffered-range bar — the player stopped pulling video data — and the
-    // 'response' listener below fires on HEADERS, so on its own it cannot
-    // distinguish "the next segment was never requested" from "it was requested
-    // and never completed". These listeners pair every googlevideo segment
-    // request with its terminal event, so the log shows the last request issued
-    // before the stall, its byte count, and whether it finished, failed or
-    // simply never appeared again.
-    const segState = new WeakMap<object, { id: number; at: number }>();
-    let segSeq = 0;
-    const isSegment = (url: string) => url.includes('googlevideo.com/videoplayback');
+      // Segment-fetch lifecycle tracing. The observed signature was a frozen
+      // buffered-range bar — the player stopped pulling video data — and the
+      // 'response' listener below fires on HEADERS, so on its own it cannot
+      // distinguish "the next segment was never requested" from "it was requested
+      // and never completed". These listeners pair every googlevideo segment
+      // request with its terminal event, so the log shows the last request issued
+      // before the stall, its byte count, and whether it finished, failed or
+      // simply never appeared again.
+      const segState = new WeakMap<object, { id: number; at: number }>();
+      let segSeq = 0;
+      const isSegment = (url: string) => url.includes('googlevideo.com/videoplayback');
 
-    page.on('request', (req) => {
-      if (!isSegment(req.url())) return;
-      const id = ++segSeq;
-      segState.set(req, { id, at: Date.now() });
-      console.log(`[Page:seg] ${ts()} #${id} REQ range=${req.headers()['range'] ?? '-'}`);
-    });
+      page.on('request', (req) => {
+        if (!isSegment(req.url())) return;
+        const id = ++segSeq;
+        segState.set(req, { id, at: Date.now() });
+        console.log(`[Page:seg] ${ts()} #${id} REQ range=${req.headers()['range'] ?? '-'}`);
+      });
 
-    page.on('requestfinished', (req) => {
-      if (!isSegment(req.url())) return;
-      const st = segState.get(req);
-      const ms = st ? Date.now() - st.at : -1;
-      const res = req.response();
-      const range = res?.headers()['content-range'] ?? '-';
-      console.log(`[Page:seg] ${ts()} #${st?.id ?? '?'} DONE ${ms}ms range=${range}`);
-    });
+      page.on('requestfinished', (req) => {
+        if (!isSegment(req.url())) return;
+        const st = segState.get(req);
+        const ms = st ? Date.now() - st.at : -1;
+        const res = req.response();
+        const range = res?.headers()['content-range'] ?? '-';
+        console.log(`[Page:seg] ${ts()} #${st?.id ?? '?'} DONE ${ms}ms range=${range}`);
+      });
 
-    page.on('requestfailed', (req) => {
-      const failure = req.failure();
-      const st = segState.get(req);
-      if (st) {
-        // A segment that was issued and died is the strongest possible evidence
-        // for "fetch started but never completed".
+      page.on('requestfailed', (req) => {
+        const failure = req.failure();
+        const st = segState.get(req);
+        if (st) {
+          // A segment that was issued and died is the strongest possible evidence
+          // for "fetch started but never completed".
+          console.error(
+            `[Page:seg] ${ts()} #${st.id} FAILED ${Date.now() - st.at}ms — ${failure?.errorText ?? 'unknown'}`,
+          );
+          return;
+        }
         console.error(
-          `[Page:seg] ${ts()} #${st.id} FAILED ${Date.now() - st.at}ms — ${failure?.errorText ?? 'unknown'}`,
+          `[Page:reqfailed] ${ts()} ${req.resourceType()} ${req.url().slice(0, 140)} — ${failure?.errorText ?? 'unknown'}`,
         );
-        return;
-      }
-      console.error(
-        `[Page:reqfailed] ${ts()} ${req.resourceType()} ${req.url().slice(0, 140)} — ${failure?.errorText ?? 'unknown'}`,
-      );
-    });
+      });
 
-    // Media traffic is the key signal for duration-correlated playback failure:
-    // YouTube streams DASH segments continuously, so a gap or a burst of
-    // non-2xx responses in these lines pinpoints the exact second playback
-    // breaks, and distinguishes "network fetch stopped" from "player aborted".
-    page.on('response', (res) => {
-      const url = res.url();
-      const status = res.status();
-      const type = res.request().resourceType();
-      const isMedia = type === 'media' || url.includes('googlevideo.com');
-      if (!isMedia) return;
-      if (status >= 400) {
-        console.error(`[Page:media] ${ts()} HTTP ${status} ${url.slice(0, 140)}`);
-      } else if (verbose) {
-        console.log(`[Page:media] ${ts()} HTTP ${status} ${type} ${url.slice(0, 120)}`);
-      }
-    });
+      // Media traffic is the key signal for duration-correlated playback failure:
+      // YouTube streams DASH segments continuously, so a gap or a burst of
+      // non-2xx responses in these lines pinpoints the exact second playback
+      // breaks, and distinguishes "network fetch stopped" from "player aborted".
+      page.on('response', (res) => {
+        const url = res.url();
+        const status = res.status();
+        const type = res.request().resourceType();
+        const isMedia = type === 'media' || url.includes('googlevideo.com');
+        if (!isMedia) return;
+        if (status >= 400) {
+          console.error(`[Page:media] ${ts()} HTTP ${status} ${url.slice(0, 140)}`);
+        } else if (verbose) {
+          console.log(`[Page:media] ${ts()} HTTP ${status} ${type} ${url.slice(0, 120)}`);
+        }
+      });
 
-    page.on('framenavigated', (frame) => {
-      if (frame === page.mainFrame()) {
-        console.log(`[Page:nav] ${ts()} ${frame.url().slice(0, 140)}`);
-      }
-    });
+      page.on('framenavigated', (frame) => {
+        if (frame === page.mainFrame()) {
+          console.log(`[Page:nav] ${ts()} ${frame.url().slice(0, 140)}`);
+        }
+      });
+    } // end browserType === "chromium" diagnostic gate
   }
 
   /**

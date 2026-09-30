@@ -40,7 +40,11 @@
 
 set -u
 
-TARGET_RE="${CB_REAPER_TARGET_RE:-chromium|ffmpeg|Xvfb}"
+# `firefox` is matched alongside chromium so an orphaned Firefox from a dead
+# server is reaped too. Without it, a server crash during a Firefox session
+# leaks the whole Firefox process tree (parent + content + GPU + utility
+# processes), which is the exact orphan problem this reaper exists to prevent.
+TARGET_RE="${CB_REAPER_TARGET_RE:-chromium|firefox|ffmpeg|Xvfb}"
 NODE_RE="${CB_REAPER_NODE_RE:-node.*dist-server/server/main.js}"
 
 # Process names that are NEVER killed, in either kill path, even when they look
