@@ -8,6 +8,11 @@ Documentation=file:///root/my-cloud-browser/scripts/cloud-browser-reaper.sh
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/cloud-browser-reaper.sh
+# systemd does NOT read /etc/security/limits.conf (that is PAM, and only applies
+# to login sessions), so any unit that shells out needs the fd limit set here
+# explicitly. The reaper spawns ps/grep/awk on every sweep and runs unattended,
+# so give it the same ceiling as the main server.
+LimitNOFILE=65536
 # Bounded so a hung process table can never block the next activation.
 TimeoutStartSec=60
 # Never let the reaper's own log grow without bound from unit invocations.

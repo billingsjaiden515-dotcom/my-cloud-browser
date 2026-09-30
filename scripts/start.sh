@@ -43,5 +43,14 @@ else
 fi
 
 export PORT="${PORT:-3001}"
+
+# Raise the file-descriptor limit for this shell and every child process.
+# Chromium opens 300+ concurrent sockets on modern sites (YouTube, etc.) and
+# crashes with ERR_INSUFFICIENT_RESOURCES above the default 1024 limit.
+# exec replaces this shell, so the raised limit is inherited by node and in turn
+# by every Chromium process Puppeteer spawns.
+ulimit -n 65536 2>/dev/null || ulimit -n "$(ulimit -Hn)" 2>/dev/null || true
+echo "  ulimit -n = $(ulimit -n)"
+
 echo "[start] Cloud Browser listening on http://0.0.0.0:${PORT}"
 exec node dist-server/server/main.js

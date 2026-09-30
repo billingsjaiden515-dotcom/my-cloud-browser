@@ -34,6 +34,21 @@ else
   cd my-cloud-browser
 fi
 
+# Raise the file-descriptor limit for this shell and every child process.
+# Chromium opens 300+ concurrent sockets on modern sites (YouTube, etc.) and
+# crashes with ERR_INSUFFICIENT_RESOURCES above the default 1024 limit.
+# This is the full-redeploy path, so without it here a fresh VPS rebuilds
+# WITHOUT the fix even though scripts/vps-restart.sh sets it.
+ulimit -n 65536 2>/dev/null || ulimit -n "$(ulimit -Hn)" 2>/dev/null || true
+echo "  ulimit -n = $(ulimit -n)"
+
+# Ensure the fd limit is set for future login sessions (persists across reboots).
+# Idempotent: only append if the entry isn't already there.
+if ! grep -q "^root soft nofile 65536" /etc/security/limits.conf 2>/dev/null; then
+  echo "  installing limits.conf entry for nofile=65536"
+  printf 'root soft nofile 65536\nroot hard nofile 65536\n' >> /etc/security/limits.conf
+fi
+
 # Step 4: Install npm dependencies and build
 echo "[4/6] Building application..."
 npm install
