@@ -178,14 +178,31 @@ export class BrowserSession {
         // the real window content area, which is what measureChromeGeometry()
         // depends on.
         defaultViewport: null,
-        // Firefox rejects Chromium's command-line flags -- see above. Window
-        // SIZE/POSITION are intentionally not forced: Firefox honours
-        // --window-* inconsistently headful, and the geometry is measured from
-        // the real window by xdotool in measureChromeGeometry() anyway, so an
-        // unforced window is measured correctly rather than assumed. These
-        // prefs are the BiDi equivalent of Chromium's --no-first-run /
-        // --no-default-browser-check / --disable-background-networking.
-        args: [],
+        // Firefox rejects Chromium's command-line flags: FirefoxLauncher appends
+        // `args` verbatim to the command line with no filtering or translation
+        // (see the note above), so Chromium's --disable-* / --no-sandbox flags
+        // would be handed to Gecko unparsed. Only Gecko-native flags appear here.
+        //
+        // Window size: forces the Firefox window to nearly fill the Xvfb
+        // display so it looks the same as Chromium, which is pinned to
+        // VIEWPORT_WIDTH x (VIEWPORT_HEIGHT + 80) = 1280x880. Firefox has no
+        // equivalent of Chromium's --window-size, so -width/-height are the
+        // correct Gecko flags. Verified live: a real Firefox launched with
+        // these reports outerWidth/outerHeight = 1900x1060.
+        //
+        // '=' form rather than space-separated '-width 1900 -height 1060'.
+        // Both work and both open about:blank (verified by launching Firefox
+        // both ways) -- Puppeteer's about:blank append in
+        // FirefoxLauncher.defaultArgs() is only skipped for the space form,
+        // but Firefox opens its default page regardless, so the outcome is the
+        // same. '=' is kept because it is the unambiguous form for Gecko: a
+        // bare '1900' on the command line is a positional argument, and the
+        // pairing between flag and value is never ambiguous this way.
+        //
+        // This does NOT affect chromeTop: that is measured from the real
+        // rendered window via xdotool in measureChromeGeometry(), never
+        // assumed from these numbers.
+        args: ['-width=1900', '-height=1060'],
         extraPrefsFirefox: {
           'browser.shell.checkDefaultBrowser': false,
           'browser.startup.homepage_override.mstone': 'ignore',
