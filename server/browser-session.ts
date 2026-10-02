@@ -50,6 +50,45 @@ const WANTED_WIN_H = 1053;
  * the SAME window -- if they used different class lists, the resize could act
  * on one window and the measurement read another.
  */
+/**
+ * New tab page rendered for Firefox sessions.
+ *
+ * Firefox's real new tab is an `about:` page and cannot be driven through
+ * WebDriver BiDi (see the comment at its use site), so this reproduces a new
+ * tab in a normal document instead. It is intentionally self-contained --
+ * inline styles, no external requests -- because the session may start with no
+ * network, and an <img> or font from a CDN would simply not render.
+ *
+ * Colours are Firefox's own UI palette (photon): #0A84FF accent, #F9F9FB
+ * surface, #0C0C0D text.
+ */
+const FIREFOX_NEW_TAB_HTML = `<!doctype html>
+<html><head><meta charset="utf-8"><title>New Tab</title>
+<style>
+  html,body{height:100%;margin:0}
+  body{background:#F9F9FB;color:#0C0C0D;
+       font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
+       display:flex;align-items:center;justify-content:center}
+  .wrap{text-align:center;max-width:34rem;padding:2rem}
+  .logo{width:64px;height:64px;margin:0 auto 1.25rem;display:block}
+  h1{font-size:1.5rem;font-weight:600;margin:0 0 .35rem}
+  p{color:#5B5B66;margin:0;font-size:.9rem}
+  .bar{margin:1.75rem auto 0;max-width:26rem;height:2.5rem;border-radius:1.25rem;
+       background:#fff;border:1px solid #D7D7DB;display:flex;align-items:center;
+       padding:0 1rem;color:#8A8A94;font-size:.9rem}
+</style></head>
+<body><div class="wrap">
+  <svg class="logo" viewBox="0 0 64 64" role="img" aria-label="Firefox">
+    <circle cx="32" cy="32" r="30" fill="#0A84FF" opacity=".12"/>
+    <circle cx="32" cy="32" r="20" fill="#0A84FF"/>
+    <path d="M20 38c3 7 12 10 19 7 5-2 8-6 9-11-3 3-7 5-12 5-6 0-11-2-14-6-1 2-2 3-2 5z" fill="#F9F9FB"/>
+    <circle cx="27" cy="28" r="2.5" fill="#F9F9FB"/>
+  </svg>
+  <h1>Firefox</h1>
+  <p>New tab ready &mdash; type a URL in the toolbar to begin.</p>
+  <div class="bar">Search or enter address</div>
+</div></body></html>`;
+
 const WINDOW_CLASSES: Record<string, string[]> = {
   chromium: ['chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable', 'Chromium', 'crx_'],
   firefox: ['Navigator', 'firefox'],
@@ -386,15 +425,34 @@ export class BrowserSession {
         return page.goto('about:blank').catch(() => {});
       });
     } else {
-      // Left at about:blank. Google is intentionally NOT used as a fallback:
-      // this commit exists to stop loading Google, and reintroducing it for
-      // Firefox would defeat the change for exactly the browser where the
-      // native page is unreachable. Revisit if a future Puppeteer/BiDi exposes
-      // Gecko's new tab.
-      console.log(
-        '[BrowserSession] Firefox: keeping about:blank — its new tab page is not ' +
-        'reachable via WebDriver BiDi (all about: URLs are refused)',
-      );
+      // ── Firefox: its new tab page, but automatable ──────────────────────
+      // Gecko's new tab is an `about:` page, and WebDriver BiDi refuses every
+      // `about:` URL, so it cannot be navigated to or scripted. Verified
+      // against real Firefox 152:
+      //
+      //   goto('about:newtab')        -> browsingContext.navigate: unsupported
+      //   goto('about:home')          -> same refusal
+      //   startup prefs in user.js    -> still opens about:blank, because
+      //                                   Puppeteer forces its own about:blank
+      //   'about:newtab' as a CLI URL -> url IS about:newtab, BUT then:
+      //        page.evaluate()        -> script.callFunction: unsupported
+      //        page.screenshot()      -> captureScreenshot: unsupported
+      //        page.mouse.click()     -> input.performActions: unsupported
+      //
+      // That last group is decisive: starting the session on the REAL
+      // about:newtab would kill geometry measurement AND all input, turning a
+      // cosmetic blank page into a completely unusable session. So the new tab
+      // is rendered into a NORMAL document with setContent() instead -- the user
+      // sees a new tab, and Puppeteer keeps full control of the page.
+      //
+      // Google is deliberately NOT used as a fallback: the point of the earlier
+      // commit was to stop loading it.
+      console.log('[BrowserSession] Firefox: rendering new tab page (about: pages are not automatable)');
+      await page.setContent(FIREFOX_NEW_TAB_HTML, { waitUntil: 'domcontentloaded' })
+        .catch((e: unknown) => {
+          console.warn(`[BrowserSession] Firefox new tab render failed: ${String(e)}`);
+          return page.goto('about:blank').catch(() => {});
+        });
     }
 
     // ── Enforce the window size, then measure ────────────────────────────
