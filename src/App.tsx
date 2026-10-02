@@ -17,6 +17,17 @@ const THEMES: { value: Theme; label: string; icon: string }[] = [
   { value: 'forest', label: 'Forest', icon: '🌲' },
 ];
 
+/**
+ * Browser id -> human label. Used for the document title. The ids must match
+ * server/browser-finder.ts BrowserInfo.name, since the dropdown is driven by
+ * /api/browsers.
+ */
+const BROWSER_META: Record<string, { label: string }> = {
+  chromium: { label: 'Chromium' },
+  firefox:  { label: 'Firefox' },
+  brave:    { label: 'Brave' },
+};
+
 export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const api = useRemoteBrowser(videoRef);
@@ -28,6 +39,11 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showError, setShowError] = useState(true);
   const [selectedBrowser, setSelectedBrowser] = useState('chromium');
+  // Which browser the CURRENT session actually launched. Tracked separately
+  // from selectedBrowser because the dropdown is hidden while connected, and
+  // because the user may change the selection before pressing Start -- the
+  // favicon/title must describe what is running, not what is highlighted.
+  const [runningBrowser, setRunningBrowser] = useState<string | null>(null);
 
   const { connectionState, error, currentUrl, currentTitle, availableBrowsers } = api;
   const isConnected = connectionState === 'connected';
@@ -48,6 +64,46 @@ export default function App() {
   useEffect(() => {
     if (error) setShowError(true);
   }, [error]);
+
+  // Clear the running browser when the session ends WITHOUT going through
+  // handleStop (crash, 410 session_dead, WebRTC drop). Without this the tab
+  // keeps showing, say, the Firefox icon after a Firefox session died on its
+  // own, which is exactly the "favicon reverts on disconnect" requirement.
+  // Gated on a real transition so it does not fire on the initial render.
+  const wasConnected = useRef(false);
+  useEffect(() => {
+    if (isConnected) {
+      wasConnected.current = true;
+    } else if (wasConnected.current) {
+      wasConnected.current = false;
+      setRunningBrowser(null);
+    }
+  }, [isConnected]);
+
+  // ── Favicon + document title ──────────────────────────────────────────
+  // While a session is running the dropdown is hidden, so the selection can
+  // no longer be edited: the favicon must follow the browser that is ACTUALLY
+  // running, not the dropdown value. Once disconnected, it falls back to the
+  // current selection so the tab previews the browser you are about to start.
+  // With no session and no meaningful selection it reverts to Chromium.
+  const activeBrowser: string = isConnected ? (runningBrowser ?? selectedBrowser) : selectedBrowser;
+  useEffect(() => {
+    const name = BROWSER_META[activeBrowser] ? activeBrowser : 'chromium';
+    const meta = BROWSER_META[name];
+
+    // Reuse the <link> from index.html instead of appending a new one on every
+    // change -- repeated appendChild calls accumulate dead link elements, and
+    // browsers may keep using the first one, which would freeze the icon.
+    let link = document.querySelector<HTMLLinkElement>('link[rel~="icon"]');
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'icon';
+      document.head.appendChild(link);
+    }
+    link.type = 'image/svg+xml';
+    link.href = `/favicon-${name}.svg`;
+    document.title = isConnected ? `Cloud Browser (${meta.label})` : 'Cloud Browser';
+  }, [activeBrowser, isConnected]);
 
   // Escape key to exit immersive
   useEffect(() => {
@@ -82,6 +138,11 @@ export default function App() {
 
   const handleStart = useCallback(async () => {
     setUrlInput('');
+    // Record the browser BEFORE awaiting, so the favicon flips the instant the
+    // user commits to it. If start() fails the session never reaches
+    // 'connected', so the isConnected gate above ignores this value and the
+    // favicon is correct again without an explicit rollback.
+    setRunningBrowser(selectedBrowser);
     await api.start(selectedBrowser);
   }, [api, selectedBrowser]);
 
@@ -89,6 +150,7 @@ export default function App() {
     await api.stop();
     setUrlInput('');
     setImmersive(false);
+    setRunningBrowser(null);
   }, [api]);
 
   const handleNavigate = useCallback((e: React.FormEvent) => {
