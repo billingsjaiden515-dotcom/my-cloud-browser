@@ -355,12 +355,47 @@ export class BrowserSession {
     this.watchPage(page);
     this.activePageId = tabId;
 
-    await page.goto('https://www.google.com', {
-      waitUntil: 'domcontentloaded',
-      timeout: 20000,
-    }).catch(() => {
-      return page.goto('about:blank').catch(() => {});
-    });
+    // ── Session start page ────────────────────────────────────────────────
+    // Goal: show the browser's OWN new tab / homepage instead of Google.
+    //
+    // Blink (Chromium, Brave): `chrome://newtab` IS navigable and verified to
+    // land on the real new tab page (Chromium redirects to
+    // chrome://new-tab-page/, Brave stays on chrome://newtab/).
+    //
+    // Gecko (Firefox): the new tab page is NOT reachable through automation.
+    // Probed against real Firefox 152 over WebDriver BiDi:
+    //   goto('about:newtab')  -> Protocol error (browsingContext.navigate):
+    //                            unsupported operation
+    //   goto('about:home')    -> same refusal
+    //   browser.newPage()     -> about:blank, 39 bytes, NOT the new tab
+    //   in-page location.href -> blocked, stays about:blank
+    // BiDi refuses every `about:` URL, and Puppeteer's tab creation does not
+    // give Gecko its new tab. So there is no route to Firefox's homepage from
+    // here.
+    //
+    // Chrome/Chromium's own behaviour is the tie-breaker: about:blank is also
+    // what it opens at startup, so leaving it is consistent with "show the
+    // browser's default page" rather than a special case for Firefox.
+    if (this.browserType !== 'firefox') {
+      const newTabUrl = 'chrome://newtab';
+      console.log(`[BrowserSession] Opening new tab for ${this.browserType}: ${newTabUrl}`);
+      await page.goto(newTabUrl, {
+        waitUntil: 'domcontentloaded',
+        timeout: 20000,
+      }).catch(() => {
+        return page.goto('about:blank').catch(() => {});
+      });
+    } else {
+      // Left at about:blank. Google is intentionally NOT used as a fallback:
+      // this commit exists to stop loading Google, and reintroducing it for
+      // Firefox would defeat the change for exactly the browser where the
+      // native page is unreachable. Revisit if a future Puppeteer/BiDi exposes
+      // Gecko's new tab.
+      console.log(
+        '[BrowserSession] Firefox: keeping about:blank — its new tab page is not ' +
+        'reachable via WebDriver BiDi (all about: URLs are refused)',
+      );
+    }
 
     // ── Enforce the window size, then measure ────────────────────────────
     // --window-size is honoured at startup, but a running window manager
