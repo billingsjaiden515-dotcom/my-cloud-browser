@@ -80,6 +80,10 @@ export class BrowserSession {
   private winY = 0;
   private winW = VIEWPORT_WIDTH;
   private winH = VIEWPORT_HEIGHT + 80;
+  // True once measureChromeGeometry() has actually found and applied a real
+  // window geometry. Until then winW/winH are the initialisers above, and
+  // startX11Capture() warns rather than silently capturing a cropped region.
+  private geometryMeasured = false;
   // Track where the current mouse press was dispatched (x11 chrome vs CDP page).
   // A drag can START in one region and END in the other; the release must be
   // routed to the SAME backend the press went to, or Puppeteer's virtual mouse
@@ -843,6 +847,20 @@ export class BrowserSession {
     const display = process.env.DISPLAY || ':99';
     // Capture exactly the browser window (chrome + full page) so the video has no
     // cut-off and capture coords map 1:1 onto window coords. Measured at launch.
+    //
+    // winW/winH/winX/winY come from measureChromeGeometry(), so the region
+    // follows whatever size the browser actually opened at -- Chromium's
+    // 1280x880 or Firefox's 1900x1053 -- instead of a fixed literal. If
+    // measurement did not run or failed to find the window, they still hold
+    // their initialisers and the stream will be cropped, so say so loudly
+    // rather than silently capturing the wrong region.
+    if (!this.geometryMeasured) {
+      console.warn(
+        `[BrowserSession] WARNING: x11grab using FALLBACK region ${this.winW}x${this.winH}+${this.winX},${this.winY} ` +
+        `because the ${this.browserType} window geometry was never measured; the stream may be cropped. ` +
+        `Check the [Geometry] lines above for a failed xdotool search.`,
+      );
+    }
     const width = this.winW;
     const height = this.winH;
     const fps = this.TARGET_FPS;
@@ -851,12 +869,30 @@ export class BrowserSession {
     // FFmpeg silently clamps anything outside it, so log the exact value being
     // passed rather than assuming JPEG_QUALITY maps where we think it does.
     const qscale = Math.round((100 - this.JPEG_QUALITY) / 10);
+    // Log the exact region handed to ffmpeg. This is the line to check when
+    // diagnosing cropping: it must show the browser's real window size, not
+    // 1280x880. Verify live with:
+    //   ps aux | grep x11grab
+    console.log(
+      `[BrowserSession] x11grab region: ${width}x${height}+${this.winX},${this.winY} ` +
+      `on ${display} (browser=${this.browserType}, measured=${this.geometryMeasured})`,
+    );
     console.log(
       `[BrowserSession] x11grab: -q:v ${qscale} (JPEG_QUALITY=${this.JPEG_QUALITY}, valid mjpeg range 1-31)`
     );
 
     // Persistent FFmpeg process: x11grab -> raw BGR frames -> JPEG pipe
     // Using rawvideo + mjpeg in one process avoids per-frame startup overhead
+    // Mid-session resize: NOT handled. The x11grab region is fixed at
+    // startX11Capture() and ffmpeg keeps grabbing the original rectangle, so if
+    // the window is resized, maximised or restored afterwards the stream shows
+    // a stale region (cropped, or padded with desktop). In practice nothing
+    // resizes the window mid-session -- the size comes from the launch args and
+    // the user drives the page, not the window -- so re-measuring would add a
+    // restart/teardown path for a case that does not occur. A session restart
+    // (or a new session) re-measures. If that ever changes, the fix is to
+    // re-run measureChromeGeometry() and restart capture with the new region,
+    // guarded so it cannot thrash on every spurious geometry read.
     this.x11ffmpeg = spawnTracked('ffmpeg', [
       '-hide_banner',
       '-loglevel', 'error',
@@ -1052,13 +1088,38 @@ export class BrowserSession {
     const envTop = process.env.CHROME_BROWSER_TOP;
     if (envTop) this.browserChromeTop = Math.max(0, parseInt(envTop, 10) || 0);
 
-    for (const cls of ['chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable', 'Chromium', 'crx_']) {
+    // Window classes to search with `xdotool search --class`, per browser.
+    // This list is the reason the capture region used to be wrong: it was
+    // Chromium-only, so a Firefox window was never found, the loop below
+    // matched nothing, and winW/winH kept their INITIALISERS (1280x880) --
+    // which x11grab then captured literally, cropping a 1900x1053 Firefox.
+    // Chromium only ever matched by luck, because Chromium happens to launch
+    // at exactly those initialiser values.
+    // Gecko's main window sets WM_CLASS to "Navigator" (the "firefox" entry is a
+    // fallback for builds/wms that differ). The existing
+    // MIN_W/MIN_H filter in xdotoolWindowGeometry() discards the tiny helper
+    // windows, so matching a class that also catches them is safe.
+    //
+    // IMPORTANT: the exact class string is NOT verified for this deployment --
+    // it could not be confirmed without running xdotool on the target Xvfb. If
+    // Firefox still measures wrong, the [Geometry] class="..." line prints
+    // every class that was tried and the IDs each returned, so the right
+    // string is visible immediately without guesswork.
+    const WINDOW_CLASSES: Record<string, string[]> = {
+      chromium: ['chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable', 'Chromium', 'crx_'],
+      firefox: ['Navigator', 'firefox'],
+    };
+    const classes = WINDOW_CLASSES[this.browserType]
+      ?? WINDOW_CLASSES.chromium;
+
+    for (const cls of classes) {
       const geo = await this.xdotoolWindowGeometry(cls);
       if (!geo) continue;
       this.winX = geo.X;
       this.winY = geo.Y;
       this.winW = geo.WIDTH;
       this.winH = geo.HEIGHT;
+      this.geometryMeasured = true;
 
       // Measure the REAL physical page area inside the window. Raw measurement
       // is logged first (value + emulation state + timing): the previous
@@ -1109,9 +1170,35 @@ export class BrowserSession {
       break;
     }
 
-    // Clamp capture region to the Xvfb display (1920x1080).
-    this.winW = Math.min(this.winW, 1920);
-    this.winH = Math.min(this.winH, 1080);
+    // Clamp the capture region to the Xvfb display (1920x1080).
+    //
+    // Size: a window larger than the display (or a stale 1900x1053 Firefox on a
+    // smaller screen) must be cropped to the display, or ffmpeg fails to grab
+    // pixels that do not exist and the pipe dies with no frames.
+    //
+    // Position: xdotool can report a NEGATIVE or off-screen origin -- openbox
+    // happily places a window partly off the root, and a maximised/restored
+    // window can report an origin beyond the display. x11grab rejects a
+    // negative offset outright ("Invalid absolute x coordinate"), so the
+    // origin is clamped into the display and the region is then reduced so
+    // x+w and y+h still fit INSIDE it. Clamping the origin without shrinking
+    // the size would just move the crop.
+    const DISPLAY_W = 1920;
+    const DISPLAY_H = 1080;
+    const rawW = this.winW;
+    const rawH = this.winH;
+    const rawX = this.winX;
+    const rawY = this.winY;
+    this.winX = Math.max(0, Math.min(this.winX, DISPLAY_W - 1));
+    this.winY = Math.max(0, Math.min(this.winY, DISPLAY_H - 1));
+    this.winW = Math.max(1, Math.min(this.winW, DISPLAY_W - this.winX));
+    this.winH = Math.max(1, Math.min(this.winH, DISPLAY_H - this.winY));
+    if (this.winX !== rawX || this.winY !== rawY || this.winW !== rawW || this.winH !== rawH) {
+      console.log(
+        `[Geometry] capture region clamped: ${rawW}x${rawH}+${rawX},${rawY} -> ` +
+        `${this.winW}x${this.winH}+${this.winX},${this.winY} (display ${DISPLAY_W}x${DISPLAY_H})`,
+      );
+    }
 
     console.log(
       `[BrowserSession] Geometry: window ${this.winW}x${this.winH} at (${this.winX},${this.winY}) ` +
