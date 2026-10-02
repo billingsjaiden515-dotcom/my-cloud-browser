@@ -1,6 +1,6 @@
 import puppeteer, { Browser, Page } from 'puppeteer-core';
 import { spawn, ChildProcess } from 'child_process';
-import { getChromiumPath } from './browser-finder.js';
+import { getChromiumPath, isChromiumFamily } from './browser-finder.js';
 import { spawnTracked, killChild, registerExternalChild } from './process-reaper.js';
 
 export const VIEWPORT_WIDTH = 1280;
@@ -126,6 +126,9 @@ export class BrowserSession {
     // Find the correct executable based on browser type
     let executablePath: string;
     if (this.browserType === 'chromium') {
+      // Chromium specifically goes through getChromiumPath(), which caches,
+      // honours CHROMIUM_PATH and searches the nix store. Other browsers are
+      // resolved by name from getBrowserInfo() below.
       executablePath = getChromiumPath();
     } else {
       const browsers = getBrowserInfo();
@@ -165,11 +168,16 @@ export class BrowserSession {
     ].join(',');
 
     // ── Launch options: per-browser ───────────────────────────────────────
-    // Chromium and Firefox get deliberately different options. Firefox runs
-    // over WebDriver BiDi, not CDP, and FirefoxLauncher appends `args`
-    // VERBATIM to the command line -- it does not filter or translate them --
-    // so handing Firefox Chromium's --disable-* / --no-sandbox flags would feed
-    // Gecko flags it cannot parse. Chromium's option object below is unchanged.
+    // Two families only. Chromium-family browsers (Chromium, Brave, and any
+    // future Vivaldi/Opera GX) get ONE identical option object below and
+    // differ only by executablePath, which is resolved earlier from
+    // getBrowserInfo(). Non-Chromium browsers (Firefox) get their own.
+    //
+    // Firefox runs over WebDriver BiDi, not CDP, and FirefoxLauncher appends
+    // `args` VERBATIM to the command line -- it does not filter or translate
+    // them -- so handing Firefox Chromium's --disable-* / --no-sandbox flags
+    // would feed Gecko flags it cannot parse. Brave is Chromium-based, so it
+    // takes the Chromium path verbatim and understands every flag in it.
     //
     // `browser: 'firefox'` (NOT `product: 'firefox'`): in puppeteer-core 25.5.0
     // `product` does not exist in LaunchOptions at all -- zero occurrences in
@@ -177,7 +185,7 @@ export class BrowserSession {
     // SupportedBrowser = 'chrome' | 'firefox'. Passing `product` would be
     // silently ignored and Chromium launched instead, which is both wrong and
     // indistinguishable from a Firefox bug at runtime.
-    if (this.browserType === 'firefox') {
+    if (!isChromiumFamily(this.browserType)) {
       this.browser = await puppeteer.launch({
         browser: 'firefox',
         executablePath,
@@ -481,7 +489,10 @@ export class BrowserSession {
     // scripts/firefox-lifecycle-test.mjs SIGKILLs firefox and 'disconnected'
     // fires ~250ms later, so markDead() runs and /api/session/status correctly
     // reports alive:false.
-    if (this.browserType === 'chromium') {
+    // Chromium-family check, NOT `=== 'chromium'`: Brave is Chromium-based and
+    // speaks CDP, so it gets the identical instrumentation. A BiDi browser
+    // would register listeners that never fire.
+    if (isChromiumFamily(this.browserType)) {
       const verbose = process.env.PAGE_DEBUG !== '0';
       const ts = () => new Date().toISOString().slice(11, 23);
 
@@ -1124,6 +1135,11 @@ export class BrowserSession {
     const WINDOW_CLASSES: Record<string, string[]> = {
       chromium: ['chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable', 'Chromium', 'crx_'],
       firefox: ['Navigator', 'firefox'],
+      // Brave's WM_CLASS is 'brave-browser' (the binary name), not 'brave'.
+      // Without this entry the xdotool search finds nothing, geometry keeps its
+      // initialisers and chromeTop is wrong -- the same failure mode Firefox
+      // had before its classes were added.
+      brave: ['brave-browser', 'brave'],
     };
     const classes = WINDOW_CLASSES[this.browserType]
       ?? WINDOW_CLASSES.chromium;

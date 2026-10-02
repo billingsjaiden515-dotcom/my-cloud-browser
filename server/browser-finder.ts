@@ -8,6 +8,24 @@ export interface BrowserInfo {
   displayName: string;
 }
 
+/**
+ * Browsers built on Chromium/Blink, which speak CDP and accept Chromium's
+ * command-line flags. Everything NOT in this set is treated as a WebDriver
+ * BiDi browser: no CDP flags, no CDP network events, its own window class.
+ *
+ * This is deliberately a property of the BROWSER, not "is it Chromium
+ * specifically". Brave, Vivaldi and Opera GX are all Chromium-based, so they
+ * take the identical launch path and get the identical diagnostics and
+ * geometry measurement as Chromium -- only the binary differs. Gating those
+ * three behaviours on `=== 'chromium'` instead would have silently given
+ * every future Chromium-based browser a BiDi-shaped, CDP-less session.
+ */
+export const CHROMIUM_FAMILY = new Set(['chromium', 'brave', 'vivaldi', 'opera', 'opera_gx']);
+
+export function isChromiumFamily(browserType: string): boolean {
+  return CHROMIUM_FAMILY.has(browserType);
+}
+
 const BROWSER_PATHS: Record<string, string[]> = {
   chromium: [
     '/nix/store',  // checked dynamically below

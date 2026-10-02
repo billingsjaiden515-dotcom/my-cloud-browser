@@ -22,6 +22,30 @@ fi
 
 echo "=== Restarting Cloud Browser ==="
 
+# ── Optional browsers ─────────────────────────────────────────────────────
+# Both are idempotent: the `command -v` guard means a restart never re-adds the
+# apt repo or re-downloads. Each block ends in `|| true` so a failed install
+# degrades to "that option shows as unavailable in the dropdown" rather than
+# aborting the restart and taking the whole server down with it.
+if ! command -v firefox-esr >/dev/null 2>&1 && ! command -v firefox >/dev/null 2>&1; then
+  echo "  installing firefox-esr..."
+  DEBIAN_FRONTEND=noninteractive apt-get update -qq \
+    && apt-get install -y firefox-esr >/dev/null 2>&1 || true
+fi
+
+# Brave is NOT in Debian/Ubuntu's repos -- it ships its own apt repository, so
+# the GPG key and the sources.list.d entry have to be added before installing.
+# Both writes are inside the same guard, so re-running is a no-op.
+if ! command -v brave-browser >/dev/null 2>&1; then
+  echo "  installing brave-browser..."
+  curl -fsSLo /usr/share/keyrings/brave-browser-archive-keyring.gpg \
+    https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg || true
+  echo "deb [signed-by=/usr/share/keyrings/brave-browser-archive-keyring.gpg] https://brave-browser-apt-release.s3.brave.com/ stable main" \
+    > /etc/apt/sources.list.d/brave-browser-release.list
+  DEBIAN_FRONTEND=noninteractive apt-get update -qq \
+    && apt-get install -y brave-browser >/dev/null 2>&1 || true
+fi
+
 # Stop the previous run.
 #
 # Order matters. Ask node to shut down GRACEFULLY first so the teardown in
