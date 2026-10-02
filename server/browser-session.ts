@@ -24,6 +24,38 @@ export interface TabInfo {
   index: number;
 }
 
+/**
+ * Target browser window size, in Xvfb screen pixels.
+ *
+ * x11grab captures the FULL 1920x1080 display (see startX11Capture), so a
+ * window smaller than that leaves a black desktop border in the stream. Every
+ * browser is opened at this size so they all look identical: Chromium and
+ * Brave via --window-size, Firefox via -width/-height. Keep all three in step.
+ *
+ * Slightly under the display so the window's own border/shadow is not clipped
+ * at the right/bottom edge.
+ */
+const WANTED_WIN_W = 1900;
+const WANTED_WIN_H = 1053;
+
+/**
+ * `xdotool search --class` window classes per browser.
+ *
+ * Firefox: Gecko's main window sets WM_CLASS to "Navigator" ("firefox" is a
+ * fallback for builds/WMs that differ). Brave: "brave-browser", the binary
+ * name. Chromium: the usual set of names and the crx_ prefix used by
+ * Chromium's helper processes.
+ *
+ * Shared by measureChromeGeometry() and enforceWindowSize() so both resolve
+ * the SAME window -- if they used different class lists, the resize could act
+ * on one window and the measurement read another.
+ */
+const WINDOW_CLASSES: Record<string, string[]> = {
+  chromium: ['chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable', 'Chromium', 'crx_'],
+  firefox: ['Navigator', 'firefox'],
+  brave: ['brave-browser', 'brave'],
+};
+
 export class BrowserSession {
   sessionId: string;
   private browser: Browser | null = null;
@@ -73,6 +105,12 @@ export class BrowserSession {
   // coordinates are offset from capture coordinates by this amount.
   private browserChromeTop = 0;
   private readonly DEFAULT_CHROME_TOP = 80; // fallback if measurement fails
+  // Window size every browser is forced to (see WANTED_WIN_W/H). Kept as
+  // instance fields so enforceWindowSize() reads the same values the launch
+  // args are built from.
+  private readonly WANTED_WIN_W = WANTED_WIN_W;
+  private readonly WANTED_WIN_H = WANTED_WIN_H;
+
   // Measured window geometry (Xvfb screen coords + size). The x11grab capture
   // region is sized to the window so the video shows chrome + full page with
   // no cut-off, and capture coords map 1:1 onto window coords.
@@ -275,9 +313,17 @@ export class BrowserSession {
           '--disable-notifications',
           '--disable-popup-blocking',
           `--window-position=0,0`,
-          // +80 for Chromium's tab strip / address bar so the PAGE content area
-          // remains the full viewport size (chrome is drawn on top of the extra 80px).
-          `--window-size=${VIEWPORT_WIDTH},${VIEWPORT_HEIGHT + 80}`,
+          // Window size is now matched to the capture region. Since 0694888
+          // x11grab captures the FULL 1920x1080 display, so a 1280x880 window
+          // leaves a large black desktop border in the stream. Firefox is
+          // already launched at 1900x1060 for the same reason; this makes every
+          // browser look the same. Keep this in step with the capture region
+          // (1920x1080) and with Firefox's -width/-height above.
+          //
+          // 1900x1053 (not 1060) leaves a few pixels of margin inside the
+          // display, matching what Firefox actually reports after its window
+          // manager settles the frame.
+          '--window-size=1900,1053',
           // Show tab strip in headful mode. SuppressUnsupportedFlagWarning now
           // rides along in `disableFeatures` above -- it must NOT be repeated
           // here as a second --disable-features, or only one of the two survives.
@@ -315,6 +361,17 @@ export class BrowserSession {
     }).catch(() => {
       return page.goto('about:blank').catch(() => {});
     });
+
+    // ── Enforce the window size, then measure ────────────────────────────
+    // --window-size is honoured at startup, but a running window manager
+    // (openbox is started by scripts/vps-restart.sh) can re-apply its own
+    // placement afterwards and silently override it. So the size is VERIFIED
+    // and, if it did not stick, forced with `xdotool windowsize` before
+    // measureChromeGeometry() runs -- otherwise chromeTop and the click
+    // coordinates would be measured against the wrong window.
+    if (isHeadful) {
+      await this.enforceWindowSize();
+    }
 
     // In headful mode, measure the real window geometry AFTER the initial
     // navigation completes. Measuring before goto() captured about:blank's
@@ -1115,32 +1172,9 @@ export class BrowserSession {
     const envTop = process.env.CHROME_BROWSER_TOP;
     if (envTop) this.browserChromeTop = Math.max(0, parseInt(envTop, 10) || 0);
 
-    // Window classes to search with `xdotool search --class`, per browser.
-    // This list is the reason the capture region used to be wrong: it was
-    // Chromium-only, so a Firefox window was never found, the loop below
-    // matched nothing, and winW/winH kept their INITIALISERS (1280x880) --
-    // which x11grab then captured literally, cropping a 1900x1053 Firefox.
-    // Chromium only ever matched by luck, because Chromium happens to launch
-    // at exactly those initialiser values.
-    // Gecko's main window sets WM_CLASS to "Navigator" (the "firefox" entry is a
-    // fallback for builds/wms that differ). The existing
-    // MIN_W/MIN_H filter in xdotoolWindowGeometry() discards the tiny helper
-    // windows, so matching a class that also catches them is safe.
-    //
-    // IMPORTANT: the exact class string is NOT verified for this deployment --
-    // it could not be confirmed without running xdotool on the target Xvfb. If
-    // Firefox still measures wrong, the [Geometry] class="..." line prints
-    // every class that was tried and the IDs each returned, so the right
-    // string is visible immediately without guesswork.
-    const WINDOW_CLASSES: Record<string, string[]> = {
-      chromium: ['chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable', 'Chromium', 'crx_'],
-      firefox: ['Navigator', 'firefox'],
-      // Brave's WM_CLASS is 'brave-browser' (the binary name), not 'brave'.
-      // Without this entry the xdotool search finds nothing, geometry keeps its
-      // initialisers and chromeTop is wrong -- the same failure mode Firefox
-      // had before its classes were added.
-      brave: ['brave-browser', 'brave'],
-    };
+    // Window classes live at module scope (WINDOW_CLASSES) so
+    // enforceWindowSize() and this function always resolve the same window.
+    // An unknown browser falls back to the Chromium list.
     const classes = WINDOW_CLASSES[this.browserType]
       ?? WINDOW_CLASSES.chromium;
 
@@ -1240,7 +1274,69 @@ export class BrowserSession {
   }
 
   /** Query window geometry for a WM_CLASS via xdotool (best-effort). */
-  private async xdotoolWindowGeometry(cls: string): Promise<{ X: number; Y: number; WIDTH: number; HEIGHT: number } | null> {
+  /**
+   * Verify the browser window actually opened at the intended size, and force
+   * it with `xdotool windowsize` if it did not.
+   *
+   * Why this exists: `--window-size` is applied at startup, but a running
+   * window manager (openbox) can re-place the window afterwards, and Chromium
+   * sometimes falls back to its default size under Xvfb. The capture region is
+   * the full 1920x1080 display, so a window that silently stayed 1280x880 shows
+   * up as a black desktop border in the stream. Verifying beats assuming.
+   *
+   * Runs BEFORE measureChromeGeometry() so chromeTop and the click-coordinate
+   * maths are computed against the final window size.
+   *
+   * Best-effort: needs xdotool and DISPLAY. Failures are logged, never thrown,
+   * because a window we could not resize is a cosmetic/geometry-accuracy issue
+   * and must not prevent the session from starting.
+   */
+  private async enforceWindowSize(): Promise<void> {
+    if (!process.env.DISPLAY) return;
+    const classes = WINDOW_CLASSES[this.browserType] ?? WINDOW_CLASSES.chromium;
+    for (const cls of classes) {
+      const geo = await this.xdotoolWindowGeometry(cls);
+      if (!geo) continue;
+      const id = geo.id;
+      if (geo.WIDTH === this.WANTED_WIN_W && geo.HEIGHT === this.WANTED_WIN_H) {
+        console.log(`[Window] ${this.browserType} already ${geo.WIDTH}x${geo.HEIGHT} — --window-size honoured`);
+      } else {
+        console.log(
+          `[Window] ${this.browserType} opened ${geo.WIDTH}x${geo.HEIGHT}, forcing ` +
+          `${this.WANTED_WIN_W}x${this.WANTED_WIN_H} with xdotool windowsize`,
+        );
+        await new Promise<void>((resolve) => {
+          try {
+            const p = spawn(
+              'xdotool',
+              ['windowsize', String(id), String(this.WANTED_WIN_W), String(this.WANTED_WIN_H)],
+              { stdio: 'ignore' },
+            );
+            p.on('error', () => resolve());
+            p.on('close', () => resolve());
+            setTimeout(resolve, 3000);
+          } catch { resolve(); }
+        });
+      }
+      // Moving to 0,0 as well: a window offset from the origin would leave a
+      // gap on two sides of the capture instead of one.
+      await new Promise<void>((resolve) => {
+        try {
+          const p = spawn('xdotool', ['windowmove', String(id), '0', '0'], { stdio: 'ignore' });
+          p.on('error', () => resolve());
+          p.on('close', () => resolve());
+          setTimeout(resolve, 3000);
+        } catch { resolve(); }
+      });
+      return;
+    }
+    console.warn(
+      `[Window] could not find a ${this.browserType} window to resize — ` +
+      `leaving geometry to measureChromeGeometry()`,
+    );
+  }
+
+  private async xdotoolWindowGeometry(cls: string): Promise<{ id: string; X: number; Y: number; WIDTH: number; HEIGHT: number } | null> {
     return new Promise((resolve) => {
       try {
         // xdotool search --class matches MULTIPLE windows: the real browser
@@ -1284,7 +1380,10 @@ export class BrowserSession {
             console.log(
               `[Geometry] Selected: ${selected ? `${selected.id} ${selected.WIDTH}x${selected.HEIGHT} @(${selected.X},${selected.Y})` : 'NONE met minimum size'}`,
             );
-            resolve(selected ? { X: selected.X, Y: selected.Y, WIDTH: selected.WIDTH, HEIGHT: selected.HEIGHT } : null);
+            // `id` is passed through: enforceWindowSize() needs it to run
+            // `xdotool windowsize <id> ...` on the same window that was
+            // selected here, so the two can never act on different windows.
+            resolve(selected ? { id: selected.id, X: selected.X, Y: selected.Y, WIDTH: selected.WIDTH, HEIGHT: selected.HEIGHT } : null);
           };
           for (const id of windowIds) {
             const g = spawn(
