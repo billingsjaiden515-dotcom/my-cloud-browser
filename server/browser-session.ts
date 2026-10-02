@@ -94,9 +94,14 @@ export class BrowserSession {
   // NOTE: a WRONG chrome value shifts ALL page Y coords by the error amount.
   // When in doubt, set CHROME_BROWSER_TOP=0 so clicks pass through unshifted.
   private browserChromeLeft = 0;
-  // Window position on the Xvfb root (for xdotool screen coords only).
-  // Parking spot for the X11 pointer: inside the 1920x1080 Xvfb display but
-  // OUTSIDE the captured window region, so it never appears in the stream.
+  // Window position on the Xvfb root (used for capture-relative click routing).
+  //
+  // Pointer parking: previously this parked the X11 pointer at (1850,1000),
+  // chosen to sit OUTSIDE the captured window so the cursor never appeared in
+  // the stream. Now that the capture region is the whole 1920x1080 display,
+  // every point on screen is inside the capture, so there is nowhere to park it
+  // that stays invisible. Hiding the cursor outright is the only way to keep it
+  // out of the video: x11grab has no cursor-suppression option.
   private readonly PARK_X = 1850;
   private readonly PARK_Y = 1000;
   // Set when the page/browser target dies unexpectedly (crash, OOM kill,
@@ -845,24 +850,34 @@ export class BrowserSession {
    */
   private startX11Capture(): void {
     const display = process.env.DISPLAY || ':99';
-    // Capture exactly the browser window (chrome + full page) so the video has no
-    // cut-off and capture coords map 1:1 onto window coords. Measured at launch.
+    // ── Capture the FULL Xvfb display, not the measured window ──────────────
+    // The Xvfb root contains only the browser during a session, so there is
+    // nothing else in frame to crop out. Capturing the whole display at (0,0)
+    // is what makes Firefox's tab bar visible: when
+    // browser.tabs.inTitlebar is enabled Firefox draws the tab strip ABOVE its
+    // client area but the xdotool window bounds do not always include that
+    // strip, so a window-sized region could start below the tabs and silently
+    // cut them off. The display cannot cut off anything above the window.
     //
-    // winW/winH/winX/winY come from measureChromeGeometry(), so the region
-    // follows whatever size the browser actually opened at -- Chromium's
-    // 1280x880 or Firefox's 1900x1053 -- instead of a fixed literal. If
-    // measurement did not run or failed to find the window, they still hold
-    // their initialisers and the stream will be cropped, so say so loudly
-    // rather than silently capturing the wrong region.
-    if (!this.geometryMeasured) {
-      console.warn(
-        `[BrowserSession] WARNING: x11grab using FALLBACK region ${this.winW}x${this.winH}+${this.winX},${this.winY} ` +
-        `because the ${this.browserType} window geometry was never measured; the stream may be cropped. ` +
-        `Check the [Geometry] lines above for a failed xdotool search.`,
-      );
-    }
-    const width = this.winW;
-    const height = this.winH;
+    // Chromium is unaffected: its window is 1280x880 inside a 1920x1080 root,
+    // so the stream simply gains the surrounding desktop. That is the
+    // trade-off of this approach and it is deliberate.
+    //
+    // CPU COST: this feeds the encoder 1920x1080 instead of 1280x880 -- 2.07M
+    // pixels/frame vs 1.13M, ~1.8x the MJPEG encode, JPEG decode and VP8
+    // encode on a 2-vCore box that is already the bottleneck. The encoder
+    // restarts itself once on the first frame to pick up the new size
+    // (webrtc-streamer.ts:304-318), so it is handled, but this is a real
+    // increase in per-frame cost and is the main thing to watch after deploy.
+    const DISPLAY_W = 1920;
+    const DISPLAY_H = 1080;
+    // Measured window geometry is still logged for diagnosis, and still
+    // required for click routing (x11Click) and chrome offsets, but it no
+    // longer determines the capture rectangle.
+    const width = DISPLAY_W;
+    const height = DISPLAY_H;
+    const capX = 0;
+    const capY = 0;
     const fps = this.TARGET_FPS;
 
     // MJPEG's -q:v is only meaningful in the 1-31 range (lower = better quality).
@@ -874,8 +889,9 @@ export class BrowserSession {
     // 1280x880. Verify live with:
     //   ps aux | grep x11grab
     console.log(
-      `[BrowserSession] x11grab region: ${width}x${height}+${this.winX},${this.winY} ` +
-      `on ${display} (browser=${this.browserType}, measured=${this.geometryMeasured})`,
+      `[BrowserSession] x11grab region: ${width}x${height}+${capX},${capY} ` +
+      `on ${display} (full display; browser=${this.browserType}, ` +
+      `measured window=${this.winW}x${this.winH}+${this.winX},${this.winY}, measured=${this.geometryMeasured})`,
     );
     console.log(
       `[BrowserSession] x11grab: -q:v ${qscale} (JPEG_QUALITY=${this.JPEG_QUALITY}, valid mjpeg range 1-31)`
@@ -899,7 +915,7 @@ export class BrowserSession {
       '-f', 'x11grab',
       '-video_size', `${width}x${height}`,
       '-framerate', String(fps),
-      '-i', `${display}+${this.winX},${this.winY}`,
+      '-i', `${display}+${capX},${capY}`,
       '-f', 'image2pipe',
       '-vcodec', 'mjpeg',
       '-q:v', String(qscale),
@@ -1303,29 +1319,56 @@ export class BrowserSession {
 
   /**
    * Convert capture/video coordinates into page viewport coordinates.
-   * The capture region equals the browser window (chrome + page, no cut-off),
-   * so the page origin is at (chromeLeft, chromeTop) within the capture —
-   * a direct translation, no rescaling needed.
+   *
+   * The capture region is the FULL Xvfb display at (0,0) (see
+   * startX11Capture), so a capture coordinate is a DISPLAY coordinate, not a
+   * window coordinate. The page origin therefore sits at
+   * (winX + chromeLeft, winY + chromeTop) within the capture, not at
+   * (chromeLeft, chromeTop) as it did when the region tracked the window.
+   * Subtracting only the chrome offsets would leave every click shifted by the
+   * window origin -- harmless only while the window happens to sit at 0,0,
+   * which is exactly the assumption that made Chromium 'look correct'.
    */
   private toPageCoords(x: number, y: number): { x: number; y: number } {
     return {
-      x: Math.max(0, Math.min(this.viewportWidth - 1, Math.round(x - this.browserChromeLeft))),
-      y: Math.max(0, Math.min(this.viewportHeight - 1, Math.round(y - this.browserChromeTop))),
+      x: Math.max(0, Math.min(this.viewportWidth - 1,
+        Math.round(x - this.winX - this.browserChromeLeft))),
+      y: Math.max(0, Math.min(this.viewportHeight - 1,
+        Math.round(y - this.winY - this.browserChromeTop))),
     };
   }
 
   /**
-   * Park the X11 pointer off the captured region so it never shows in the stream.
-   * The page's hover state is driven by Puppeteer's virtual mouse, so the X11
-   * pointer position is irrelevant to page interaction.
+   * Keep the X11 pointer out of the captured video.
+   *
+   * The page's hover state is driven by Puppeteer's virtual mouse, so the real
+   * pointer position is irrelevant to interaction -- but it is NOT irrelevant to
+   * the stream. Since capture now covers the whole 1920x1080 display there is
+   * no off-screen parking spot left, so the cursor image is blanked instead.
+   * x11grab has no cursor-suppression option, so blanking is the only lever.
+   *
+   * Best-effort by design: both calls swallow errors. If xsetroot or XFixes is
+   * unavailable the cursor simply stays visible in the video, which is a
+   * cosmetic regression, not a functional one -- so it must never be able to
+   * throw and break capture startup.
    */
   private parkX11Cursor(): void {
     if (!process.env.DISPLAY) return;
-    try {
-      const proc = spawn('xdotool', ['mousemove', String(this.PARK_X), String(this.PARK_Y)], { stdio: 'ignore' });
-      proc.on('error', () => { /* xdotool not installed */ });
-      setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* done */ } }, 1500);
-    } catch { /* xdotool unavailable */ }
+    const run = (cmd: string, args: string[]) => {
+      try {
+        const p = spawn(cmd, args, { stdio: 'ignore' });
+        p.on('error', () => { /* not installed -- pointer may stay visible */ });
+        setTimeout(() => { try { p.kill('SIGKILL'); } catch { /* done */ } }, 1500);
+      } catch { /* spawn unavailable */ }
+    };
+    // Park it in the far corner anyway: if blanking fails, that is the pixel
+    // least likely to matter (bottom-right, usually empty desktop).
+    run('xdotool', ['mousemove', String(this.PARK_X), String(this.PARK_Y)]);
+    // Blank the cursor image. xsetroot ships in x11-xserver-utils, which is NOT
+    // in the deploy package list, so this is a no-op unless it happens to be
+    // present -- hence the errors being swallowed. If it is missing the cursor
+    // stays visible in the video (cosmetic only).
+    run('xsetroot', ['-cursor_name', 'none']);
   }
 
   /**
@@ -1336,10 +1379,14 @@ export class BrowserSession {
   private async x11Click(x: number, y: number, button: 'left' | 'right' | 'middle', opts?: { press?: boolean; release?: boolean; repeat?: number }): Promise<void> {
     if (!process.env.DISPLAY) return;
     const btn = button === 'left' ? '1' : button === 'middle' ? '2' : '3';
-    // xdotool works in screen coords; capture coords are window coords, so
-    // translate by the window origin.
-    const sx = Math.floor(this.winX + x);
-    const sy = Math.floor(this.winY + y);
+    // xdotool works in DISPLAY coords. Since the capture region is now the full
+    // display at (0,0), a capture coordinate is ALREADY a display coordinate,
+    // so it must be used as-is. The previous `this.winX + x` translation was
+    // correct only when the capture region tracked the window; with a
+    // full-display capture it would double-offset every chrome click by the
+    // window origin.
+    const sx = Math.floor(x);
+    const sy = Math.floor(y);
     const args: string[] = ['mousemove', String(sx), String(sy)];
     if (opts?.press) {
       args.push('mousedown', btn);
@@ -1362,9 +1409,18 @@ export class BrowserSession {
     this.parkX11Cursor();
   }
 
-  /** True when a capture coordinate is inside the browser chrome (not the page). */
+  /**
+   * True when a capture coordinate is inside the browser chrome (not the page).
+   * Capture coords are DISPLAY coords (full-display capture), so the page area
+   * starts after the window origin as well as the chrome offsets. Without the
+   * winX/winY terms, everything left of/above the window -- plain desktop --
+   * would be misread as chrome and routed to xdotool instead of the page.
+   */
   private isInChrome(x: number, y: number): boolean {
-    return !!process.env.DISPLAY && (y < this.browserChromeTop || x < this.browserChromeLeft);
+    if (!process.env.DISPLAY) return false;
+    const lx = x - this.winX;
+    const ly = y - this.winY;
+    return lx >= 0 && ly >= 0 && (ly < this.browserChromeTop || lx < this.browserChromeLeft);
   }
 
   /**
