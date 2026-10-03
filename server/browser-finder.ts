@@ -51,6 +51,12 @@ const BROWSER_PATHS: Record<string, string[]> = {
     '/usr/bin/brave',
     '/opt/brave.com/brave/brave',
   ],
+vivaldi: [
+    '/Applications/Vivaldi.app/Contents/MacOS/Vivaldi',
+    '/usr/bin/vivaldi-stable',
+    '/usr/bin/vivaldi',
+    '/opt/vivaldi/vivaldi',
+  ],
 };
 
 function findInNixStore(binary: string): string | null {
@@ -149,6 +155,17 @@ export function getBrowserInfo(): BrowserInfo[] {
     displayName: 'Brave',
     executablePath: bravePath || '',
     available: !!bravePath,
+  });
+
+  // Vivaldi. Debian/Ubuntu package installs the binary as `vivaldi-stable`
+  // (hence both names below); macOS ships Vivaldi.app/Contents/MacOS/Vivaldi.
+  const vivaldiPath = findExecutable('vivaldi-stable') || findExecutable('vivaldi') ||
+    BROWSER_PATHS.vivaldi.find(p => existsSync(p)) || null;
+  browsers.push({
+    name: 'vivaldi',
+    displayName: 'Vivaldi',
+    executablePath: vivaldiPath || '',
+    available: !!vivaldiPath,
   });
 
   return browsers;

@@ -93,6 +93,13 @@ const WINDOW_CLASSES: Record<string, string[]> = {
   chromium: ['chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable', 'Chromium', 'crx_'],
   firefox: ['Navigator', 'firefox'],
   brave: ['brave-browser', 'brave'],
+  // Vivaldi sets WM_CLASS from its binary name. Debian installs it as
+  // `vivaldi-stable`, and the class can be capitalised depending on the build,
+  // so both spellings are tried plus the bare name. NOT verified against the
+  // VPS (no xdotool there). If geometry comes back wrong, the
+  // `[Geometry] class="..."` log prints every class tried and the IDs each
+  // returned, so the correct string is visible without guesswork.
+  vivaldi: ['vivaldi-stable', 'Vivaldi-stable', 'vivaldi', 'Vivaldi'],
 };
 
 export class BrowserSession {

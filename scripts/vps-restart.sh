@@ -46,6 +46,28 @@ if ! command -v brave-browser >/dev/null 2>&1; then
     && apt-get install -y brave-browser >/dev/null 2>&1 || true
 fi
 
+# Vivaldi publishes NO apt repository -- only a .deb per release. The URL is
+# version-less and always serves the current stable build (verified: HTTP 200,
+# no redirect), so it is re-fetched on every restart unless VIVALDI_SKIP is
+# set. Set VIVALDI_SKIP=1 to make this a one-shot install that is never
+# refreshed; otherwise `command -v` alone would mean Vivaldi NEVER updates,
+# because the binary name is always the same.
+#
+# Left as a plain .deb install: enabling Vivaldi's apt repo would need another
+# GPG key, and a stale-but-working install is better than a restart that fails
+# on an unreachable third-party repo.
+if [ "${VIVALDI_SKIP:-0}" != "1" ] && ! command -v vivaldi-stable >/dev/null 2>&1; then
+  echo "  installing vivaldi-stable..."
+  VIVALDI_DEB=/tmp/vivaldi-stable_amd64.deb
+  if curl -fsSLo "$VIVALDI_DEB" "https://downloads.vivaldi.com/stable/vivaldi-stable_amd64.deb"; then
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq \
+      && apt-get install -y "$VIVALDI_DEB" >/dev/null 2>&1 || true
+  else
+    echo "  WARNING: could not download vivaldi-stable .deb — skipping"
+  fi
+  rm -f "$VIVALDI_DEB"
+fi
+
 # Stop the previous run.
 #
 # Order matters. Ask node to shut down GRACEFULLY first so the teardown in
