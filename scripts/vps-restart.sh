@@ -81,6 +81,31 @@ fi
 #     tor-browser-linux-x86_64-15.0.24.tar.xz.asc also available
 # x86_64 is the ONLY linux build published for 15.0.24, so a non-x86_64 host
 # cannot get Tor Browser at all and is skipped rather than left half-installed.
+# xz-utils provides /usr/bin/xz, which GNU tar SHELLS OUT TO when extracting a
+# .tar.xz. Without it the install fails with
+#   tar (child): xz: Cannot exec: No such file or directory
+# even though the tarball downloads perfectly -- and, because `tar -xf` fails
+# before creating anything, the script correctly reported "NOT installed"
+# rather than leaving a broken directory behind.
+#
+# Only Tor needs this: it is the only install below that uses tar. Brave and
+# Vivaldi go through apt-get/dpkg, and dpkg/ar carry their own decompressors
+# (verified: the Vivaldi .deb is an `ar` archive, `!<arch>` magic), so they are
+# unaffected. Firefox likewise installs via apt.
+#
+# install xz-utils BEFORE downloading, so a host missing it does not spend
+# 138MB on a tarball it cannot open.
+if ! command -v xz >/dev/null 2>&1; then
+  echo "  installing xz-utils (needed to extract the Tor Browser tarball)..."
+  DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 || true
+  DEBIAN_FRONTEND=noninteractive apt-get install -y xz-utils >/dev/null 2>&1 || true
+  if command -v xz >/dev/null 2>&1; then
+    echo "  xz-utils installed"
+  else
+    echo "  WARNING: xz-utils could not be installed — Tor Browser extraction will fail"
+  fi
+fi
+
 if [ ! -d "/root/tor-browser" ]; then
   TOR_ARCH=$(uname -m)
   if [ "$TOR_ARCH" = "x86_64" ]; then
