@@ -68,6 +68,66 @@ if [ "${VIVALDI_SKIP:-0}" != "1" ] && ! command -v vivaldi-stable >/dev/null 2>&
   rm -f "$VIVALDI_DEB"
 fi
 
+# ── Tor Browser ─────────────────────────────────────────────────────────
+# Not a selectable browser yet: this only provisions the binary so the launch
+# path can be tested. Wiring it into the switcher is deliberately a separate
+# change.
+#
+# Version pinned deliberately. A version-less URL does not exist for Tor
+# Browser, and the 14.5 path in the original spec 404s -- current releases are
+# 15.0.24 (stable) and 16.0.x (alpha). Verified live:
+#   https://www.torproject.org/dist/torbrowser/15.0.24/
+#     tor-browser-linux-x86_64-15.0.24.tar.xz  -> HTTP 200, 137930492 bytes
+#     tor-browser-linux-x86_64-15.0.24.tar.xz.asc also available
+# x86_64 is the ONLY linux build published for 15.0.24, so a non-x86_64 host
+# cannot get Tor Browser at all and is skipped rather than left half-installed.
+if [ ! -d "/root/tor-browser" ]; then
+  TOR_ARCH=$(uname -m)
+  if [ "$TOR_ARCH" = "x86_64" ]; then
+    echo "  installing Tor Browser 15.0.24 (x86_64)..."
+    TOR_TARBALL=/tmp/tor-browser.tar.xz
+    if curl -fsSLo "$TOR_TARBALL" \
+      "https://www.torproject.org/dist/torbrowser/15.0.24/tor-browser-linux-x86_64-15.0.24.tar.xz"; then
+      # Guard on a non-empty download: without this a failed curl would leave
+      # an empty/partial file and `tar -xf` would still create the directory,
+      # making a broken install look installed (the `[ ! -d ]` guard above
+      # would then skip every future attempt).
+      if [ -s "$TOR_TARBALL" ]; then
+        mkdir -p /root/tor-browser
+        if tar -xf "$TOR_TARBALL" -C /root/tor-browser --strip-components=1; then
+          echo "  Tor Browser extracted to /root/tor-browser"
+        else
+          echo "  WARNING: tar extraction failed for Tor Browser"
+          rm -rf /root/tor-browser
+        fi
+      else
+        echo "  WARNING: Tor Browser download was empty — skipping"
+      fi
+      rm -f "$TOR_TARBALL"
+    else
+      echo "  WARNING: could not download Tor Browser — skipping"
+    fi
+  else
+    echo "  Tor Browser install skipped: unsupported arch $TOR_ARCH (no x86_64 build published)"
+  fi
+fi
+
+# Report whether Tor Browser is present, and its version.
+#
+# The version is read from application.ini rather than by running
+# `start-tor-browser --version`. That flag does NOT exist: the launcher's
+# argument loop has no `--version` case, so it falls through to `*)  # No more
+# options` -> break -> and the script proceeds to BOOTSTRAP TOR. A "version
+# check" would therefore start a Tor connection (and block) on every restart.
+# application.ini reports the same underlying build safely.
+if [ -f /root/tor-browser/Browser/application.ini ]; then
+  TOR_VER=$(grep -m1 '^Version=' /root/tor-browser/Browser/application.ini 2>/dev/null | cut -d= -f2)
+  TOR_NAME=$(grep -m1 '^Name=' /root/tor-browser/Browser/application.ini 2>/dev/null | cut -d= -f2)
+  echo "  Tor Browser installed: ${TOR_NAME:-Firefox} ${TOR_VER:-unknown} (package 15.0.24)"
+else
+  echo "  Tor Browser NOT installed (no application.ini under /root/tor-browser/Browser)"
+fi
+
 # Stop the previous run.
 #
 # Order matters. Ask node to shut down GRACEFULLY first so the teardown in
