@@ -157,16 +157,33 @@ export function getBrowserInfo(): BrowserInfo[] {
     available: !!bravePath,
   });
 
-  // Vivaldi. Debian/Ubuntu package installs the binary as `vivaldi-stable`
-  // (hence both names below); macOS ships Vivaldi.app/Contents/MacOS/Vivaldi.
-  const vivaldiPath = findExecutable('vivaldi-stable') || findExecutable('vivaldi') ||
-    BROWSER_PATHS.vivaldi.find(p => existsSync(p)) || null;
-  browsers.push({
-    name: 'vivaldi',
-    displayName: 'Vivaldi',
-    executablePath: vivaldiPath || '',
-    available: !!vivaldiPath,
-  });
+  // ── Vivaldi: detected and installed, but NOT advertised yet ─────────────
+  // Vivaldi is Chromium-based and launches correctly (verified against the
+  // real binary), but it reports outerWidth/outerHeight/innerWidth/
+  // innerHeight as 0x0 with defaultViewport: null -- which this app requires
+  // so that innerWidth describes the real window content area. Chromium and
+  // Brave return real numbers under identical conditions, so this is
+  // Vivaldi-specific.
+  //
+  // That makes measureChromeGeometry()'s `inner.w > 0 && inner.h > 0` guard
+  // false, so chromeTop/chromeLeft keep their defaults and every PAGE click
+  // lands short by the window's chrome height. Chrome-area (xdotool) input and
+  // the capture/resize paths are unaffected -- only page-coordinate mapping is
+  // wrong.
+  //
+  // It is therefore deliberately NOT pushed into `browsers`, which is what
+  // both the dropdown (/api/browsers) and launch() read. Excluding it here
+  // makes Vivaldi unselectable AND unlaunchable, which is the intent: shipping
+  // a fourth browser whose page clicks are broken is worse than shipping three
+  // that work.
+  //
+  // Detection, the install step, the reaper entry and the icons all remain in
+  // place, so re-enabling is a one-line uncomment once the click path is fixed.
+  // Re-enable only after confirming on the VPS that `[Geometry] inner raw:`
+  // reports real numbers under Xvfb + openbox -- the 0x0 above was measured
+  // headless, where no OS window exists, and may not occur headful at all.
+  // (CDP Browser.getWindowForTarget / getWindowBounds both return "Protocol
+  // error" on Vivaldi, so the bounds cannot be recovered that way either.)
 
   return browsers;
 }
