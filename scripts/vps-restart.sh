@@ -187,10 +187,10 @@ pkill -9 -f "node.*main" 2>/dev/null || true
 pkill -9 -f "chromium" 2>/dev/null || true
 pkill -9 -f "ffmpeg" 2>/dev/null || true
 pkill -9 -f "Xvfb" 2>/dev/null || true
-# openbox is started the same way Xvfb is -- detached from this script -- so it
-# must be swept with it. Two openbox instances both claiming :99 leaves focus
+# xfwm4 is started the same way Xvfb is -- detached from this script -- so it
+# must be swept with it. Two xfwm4 instances both claiming :99 leaves focus
 # routing ambiguous, and a stale one survives every restart as an orphan.
-pkill -9 -x openbox 2>/dev/null || true
+pkill -9 -x xfwm4 2>/dev/null || true
 sleep 2
 
 # Verify instead of assuming: a surviving process here is a leak, so say so.
@@ -264,31 +264,36 @@ fi
 # ever receives X11 input focus: the X server has no notion of an active window,
 # so `xdotool key`/`type` have no focus target and the keystrokes are discarded.
 # Mouse clicks are unaffected, which is why clicking works while typing does
-# not. openbox is the smallest thing that establishes focus and routes key
-# events, and it draws nothing, so it does not appear in the captured frame.
-if ! command -v openbox >/dev/null 2>&1; then
-  echo "Installing openbox..."
-  apt-get update -qq >/dev/null 2>&1 || true
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openbox >/tmp/openbox-install.log 2>&1 || true
+# not. A WM is what establishes focus and routes key events.
+#
+# We use xfwm4 (XFCE's window manager) with its compositor enabled, rather than
+# openbox. openbox has no compositor, and Tor Browser's rendering engine
+# (CompositorBridgeChild) crashes without one under Xvfb:
+#   CompositorBridgeChild receives IPC close with reason=AbnormalShutdown
+# xfwm4's compositor provides the rendering context Firefox-family browsers
+# (including Tor Browser) require. This adds ~5-10% CPU cost compared to
+# openbox.
+if ! command -v xfwm4 >/dev/null 2>&1; then
+  echo "Installing xfwm4..."
+  apt-get update -qq
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq xfwm4 >/tmp/xfwm4-install.log 2>&1 || true
 fi
 
-if command -v openbox >/dev/null 2>&1; then
-  echo "Starting openbox..."
-  DISPLAY=:99 openbox >/tmp/openbox.log 2>&1 &
+if ! command -v xfwm4 >/dev/null 2>&1; then
+  echo "ERROR: xfwm4 failed to install"
+else
+  echo "Starting xfwm4 (with compositor)..."
+  DISPLAY=:99 xfwm4 --compositor=on >/tmp/xfwm4.log 2>&1 &
   sleep 1
   # Verify rather than assume, and use `pgrep -f` rather than `pgrep -x`:
   # -x matches the process NAME, which Linux truncates to 15 characters, so it
   # can report a running WM as absent. -f matches the full command line and is
   # what actually proves the WM is alive on this display.
-  if pgrep -f "openbox" >/dev/null 2>&1; then
-    echo "  openbox running (pid $(pgrep -f 'openbox' | tr '\n' ' '))"
+  if pgrep -f "xfwm4" >/dev/null 2>&1; then
+    echo "  xfwm4 running (pid $(pgrep -f 'xfwm4' | tr '\n' ' '))"
   else
-    echo "WARNING: openbox failed to start - keyboard focus may not work"
-    echo "  /tmp/openbox.log:"; tail -5 /tmp/openbox.log 2>/dev/null
+    echo "WARNING: xfwm4 failed to start — keyboard focus may not work"
   fi
-else
-  echo "WARNING: openbox not installed - keyboard focus will not work"
-  echo "  install log:"; tail -5 /tmp/openbox-install.log 2>/dev/null
 fi
 
 # Configure PulseAudio with a virtual null sink so headful Chromium has an
