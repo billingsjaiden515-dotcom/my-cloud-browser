@@ -19,13 +19,37 @@ const VP8_PAYLOAD_TYPE = 96; // Dynamic PT for VP8
  * Default: [] (host candidates only). On a VPS with a public IP or 1:1 NAT,
  * host candidates are sufficient.
  *
- * For NAT'd / port-forwarded environments where UDP inbound is unavailable
- * (e.g. GitHub Codespaces, which only forwards TCP), set WEBRTC_ICE_SERVERS to a
- * JSON array with a TURN server reachable over TCP, e.g.:
- *   WEBRTC_ICE_SERVERS='[{"urls":"turn:openrelay.metered.ca:443","username":"openrelayproject","credential":"openrelayproject"}]'
+ * Set WEBRTC_ICE_SERVERS to a JSON array of standard RTCIceServer objects.
+ * Mixed STUN + TURN entries are supported, e.g. Cloudflare's hosted TURN:
  *
- * TCP transport is auto-appended to TURN URLs when no transport is specified,
- * because GitHub Codespaces (and similar environments) block UDP.
+ *   WEBRTC_ICE_SERVERS='[
+ *     {"urls":"stun:stun.cloudflare.com:3478"},
+ *     {"urls":"turn:turn.cloudflare.com:3478?transport=udp","username":"...","credential":"..."},
+ *     {"urls":"turn:turn.cloudflare.com:3478?transport=tcp","username":"...","credential":"..."},
+ *     {"urls":"turns:turn.cloudflare.com:5349?transport=tcp","username":"...","credential":"..."}
+ *   ]'
+ *
+ * Credentials are never hardcoded here -- they come from the environment, and
+ * the same array is handed to the browser via GET /api/config so both peers
+ * agree on the relay.
+ *
+ * THREE werift BEHAVIOURS that shape the above config. All verified against
+ * werift's own parseIceServers()/resolveTurnTransport(), not assumed:
+ *
+ * 1. ONLY THE FIRST `turn:` ENTRY IS USED. Later TURN entries are parsed and
+ *    then discarded (`if (!options.turnServer && ...)`). The multiple TURN URLs
+ *    above are therefore NOT a fallback chain -- only the first one allocates
+ *    a relay. Put the transport you want FIRST. Extra entries are harmless but
+ *    give a false impression of redundancy.
+ *
+ * 2. `?transport=` IN THE URL IS HONOURED, and it OVERRIDES the hardcoded
+ *    `turnTransport: 'tcp'` in processOffer(). werift's resolveTurnTransport
+ *    checks parsedTurnTransport before configuredTurnTransport. So
+ *    `?transport=udp` really does get UDP, despite that hardcoded value.
+ *
+ * 3. `turns:` MEANS TLS regardless of the query string, and
+ *    `turns:...?transport=udp` is REJECTED OUTRIGHT as invalid. `stuns:` and
+ *    `stun:` are read as plain STUN and contribute no TURN credentials.
  */
 export function getConfiguredIceServers(): { urls: string; username?: string; credential?: string }[] {
   const raw = process.env.WEBRTC_ICE_SERVERS;
@@ -33,9 +57,9 @@ export function getConfiguredIceServers(): { urls: string; username?: string; cr
     try {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        // Return servers as-is. TCP transport is handled by the turnTransport
-        // config option in the RTCPeerConnection, not by URL query parameters.
-        // werift does not parse ?transport=tcp from TURN URLs.
+        // Returned as-is. werift parses ?transport= from these URLs itself
+        // (see note 2 above), so the transport belongs in the URL, not only in
+        // the RTCPeerConnection config.
         return parsed as { urls: string; username?: string; credential?: string }[];
       }
       console.error('[WebRTC] WEBRTC_ICE_SERVERS is not an array, ignoring');
@@ -155,7 +179,14 @@ export class WebRTCStreamer {
 
     this.pc = new RTCPeerConnection({
       iceServers,
-      // Force TCP for TURN allocation (Codespaces blocks UDP)
+      // Fallback transport for TURN when a URL does not specify one (most
+      // TCP-only environments, e.g. GitHub Codespaces).
+      //
+      // A `?transport=` in the TURN URL OVERRIDES this: werift's
+      // resolveTurnTransport() prefers parsedTurnTransport over
+      // configuredTurnTransport. So `?transport=udp` gets UDP even though this
+      // says 'tcp', and a TURN URL with no transport parameter falls back to
+      // TCP here. See getConfiguredIceServers() for the full picture.
       turnTransport: 'tcp',
     } as import('werift').RTCConfiguration);
 
