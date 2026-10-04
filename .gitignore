@@ -22,3 +22,9 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+# TURN credentials for WEBRTC_ICE_SERVERS. scripts/vps-restart.sh reads
+# /root/my-cloud-browser/.env.ice at startup. The plain `.env` rule above does
+# NOT cover this filename, so it needs its own entry -- without it the TURN
+# username/credential would be committable.
+.env.ice
