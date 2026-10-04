@@ -89,6 +89,37 @@ const FIREFOX_NEW_TAB_HTML = `<!doctype html>
   <div class="bar">Search or enter address</div>
 </div></body></html>`;
 
+/**
+ * Approximate browser-chrome height (tab strip + omnibox), in pixels, used ONLY
+ * when the page-side measurement fails.
+ *
+ * Why this exists: measureChromeGeometry() normally derives chromeTop by
+ * subtracting the page's own innerHeight from the xdotool window height. That
+ * requires the browser to report window.innerWidth/innerHeight. Vivaldi reports
+ * 0x0 for those under automation, which left the whole block skipped and
+ * chromeTop at its default -- every page click then landed short by the chrome
+ * height. xdotool reads the real X11 window geometry and always works, so a
+ * known-approximate chrome height is a far better fallback than none.
+ *
+ * Values are headful (Xvfb) heights measured for this app's window size:
+ * Chromium ~143 is the long-established exact value here (it was previously
+ * hardcoded and cross-checked against Chromium's own outerHeight-innerHeight).
+ * Brave and Vivaldi are estimates from headless launches and MUST be corrected
+ * against the VPS log -- the fallback prints what it used for exactly that
+ * purpose. Override the whole thing at runtime with CHROME_BROWSER_TOP=NNN,
+ * which takes precedence over this table.
+ *
+ * When re-measuring on the VPS: read the `page-side measurement unavailable,
+ * using xdotool fallback` line, compare the click accuracy, and update the
+ * number here.
+ */
+const CHROME_TOP_FALLBACK: Record<string, number> = {
+  chromium: 143,   // exact for this deployment, cross-checked historically
+  brave: 78,       // estimate: Brave reported innerHeight 972 of a 1053 window
+  vivaldi: 78,     // estimate: Vivaldi's chrome is Blink-based, same as Brave
+  firefox: 88,     // estimate: Gecko tab bar + toolbar, taller than Blink's
+};
+
 const WINDOW_CLASSES: Record<string, string[]> = {
   chromium: ['chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable', 'Chromium', 'crx_'],
   firefox: ['Navigator', 'firefox'],
@@ -1331,6 +1362,43 @@ export class BrowserSession {
           `[Geometry] chrome cross-check: byXdotool=${chromeByXdotool}px vs ` +
           `byChromiumOuterInner=${chromeByChromium}px (outer=${inner.outerH}) — ` +
           `${chromeByXdotool === chromeByChromium ? 'MATCH, chromeTop is exact' : 'MISMATCH, investigate window bounds'}`,
+        );
+      } else {
+        // ── Page-side measurement unavailable → xdotool fallback ──────────
+        // The browser reported 0x0 (or evaluate() failed) for innerWidth/
+        // innerHeight. Vivaldi does this under automation. Without this branch
+        // the block above is skipped entirely and chromeTop keeps its default,
+        // so every page click is short by the real chrome height and the
+        // viewport clamps every coordinate to a 1280x800 box.
+        //
+        // xdotool already gave us the true WINDOW size above (geo), and that
+        // path works because it reads X11 rather than a page API. The page area
+        // is then the window minus a per-browser chrome height.
+        //
+        // CHROME_BROWSER_TOP overrides the table, so the value can be tuned on
+        // a live VPS without a redeploy.
+        const envFallback = parseInt(process.env.CHROME_BROWSER_TOP || '', 10);
+        const chromeTop = Number.isFinite(envFallback)
+          ? envFallback
+          : (CHROME_TOP_FALLBACK[this.browserType] ?? this.DEFAULT_CHROME_TOP);
+        const source = Number.isFinite(envFallback) ? 'CHROME_BROWSER_TOP' : `CHROME_TOP_FALLBACK.${this.browserType}`;
+
+        this.browserChromeTop = Math.max(0, chromeTop);
+        this.browserChromeLeft = 0; // no reliable basis; chrome is full-width
+        // Page area = window minus the top chrome. Clamped to at least 1px so
+        // toPageCoords()'s clamp (viewportHeight - 1) cannot invert.
+        this.viewportWidth = Math.max(1, geo.WIDTH - this.browserChromeLeft);
+        this.viewportHeight = Math.max(1, geo.HEIGHT - this.browserChromeTop);
+
+        console.warn(
+          `[Geometry] page-side measurement ${inner ? `${inner.w}x${inner.h}` : 'EVALUATE_FAILED'}, ` +
+          `using xdotool fallback (chromeTop=${this.browserChromeTop} from ${source}, ` +
+          `viewport=${this.viewportWidth}x${this.viewportHeight} from window ${geo.WIDTH}x${geo.HEIGHT})`,
+        );
+        console.warn(
+          `[Geometry] NOTE: chromeTop=${this.browserChromeTop} is an APPROXIMATION for ${this.browserType}; ` +
+          `clicks in the page may be off by a few px. Verify, then update ` +
+          `CHROME_TOP_FALLBACK.${this.browserType} or set CHROME_BROWSER_TOP.`,
         );
       }
       break;
