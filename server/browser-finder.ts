@@ -157,33 +157,36 @@ export function getBrowserInfo(): BrowserInfo[] {
     available: !!bravePath,
   });
 
-  // ── Vivaldi: detected and installed, but NOT advertised yet ─────────────
-  // Vivaldi is Chromium-based and launches correctly (verified against the
-  // real binary), but it reports outerWidth/outerHeight/innerWidth/
-  // innerHeight as 0x0 with defaultViewport: null -- which this app requires
-  // so that innerWidth describes the real window content area. Chromium and
-  // Brave return real numbers under identical conditions, so this is
-  // Vivaldi-specific.
+  // ── Vivaldi ───────────────────────────────────────────────────────────
+  // Re-enabled. It was withdrawn in 5c2698f because it reported 0x0 for
+  // innerWidth/innerHeight, which skipped measureChromeGeometry()'s
+  // measurement block and broke page-click mapping.
   //
-  // That makes measureChromeGeometry()'s `inner.w > 0 && inner.h > 0` guard
-  // false, so chromeTop/chromeLeft keep their defaults and every PAGE click
-  // lands short by the window's chrome height. Chrome-area (xdotool) input and
-  // the capture/resize paths are unaffected -- only page-coordinate mapping is
-  // wrong.
+  // Two things changed since then:
+  //   1. That 0x0 was measured HEADLESS, where no OS window exists. It may not
+  //      occur under Xvfb, where Vivaldi would report normally and take the
+  //      exact-measurement path.
+  //   2. measureChromeGeometry() now has an xdotool fallback for exactly this
+  //      case (see CHROME_TOP_FALLBACK in browser-session.ts), so if Vivaldi
+  //      does report 0x0 headful, clicks land approximately instead of
+  //      silently breaking.
   //
-  // It is therefore deliberately NOT pushed into `browsers`, which is what
-  // both the dropdown (/api/browsers) and launch() read. Excluding it here
-  // makes Vivaldi unselectable AND unlaunchable, which is the intent: shipping
-  // a fourth browser whose page clicks are broken is worse than shipping three
-  // that work.
+  // Verified when this was withdrawn: Vivaldi launches over CDP with
+  // Chromium's flags, page.on('request') fires, browser.on('disconnected')
+  // fires on SIGKILL, and chrome://newtab resolves to Vivaldi's own start
+  // page (chrome://vivaldi-webui/startpage). It is Chromium-based, so
+  // isChromiumFamily() routes it through the identical launch path.
   //
-  // Detection, the install step, the reaper entry and the icons all remain in
-  // place, so re-enabling is a one-line uncomment once the click path is fixed.
-  // Re-enable only after confirming on the VPS that `[Geometry] inner raw:`
-  // reports real numbers under Xvfb + openbox -- the 0x0 above was measured
-  // headless, where no OS window exists, and may not occur headful at all.
-  // (CDP Browser.getWindowForTarget / getWindowBounds both return "Protocol
-  // error" on Vivaldi, so the bounds cannot be recovered that way either.)
+  // Both outcomes are now safe, which is why it can ship: exact if it measures,
+  // approximate if it does not, with a WARN line in the log either way.
+  const vivaldiPath = findExecutable('vivaldi-stable') || findExecutable('vivaldi') ||
+    BROWSER_PATHS.vivaldi.find(p => existsSync(p)) || null;
+  browsers.push({
+    name: 'vivaldi',
+    displayName: 'Vivaldi',
+    executablePath: vivaldiPath || '',
+    available: !!vivaldiPath,
+  });
 
   return browsers;
 }
