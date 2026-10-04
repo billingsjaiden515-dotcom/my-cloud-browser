@@ -153,6 +153,44 @@ else
   echo "  Tor Browser NOT installed (no application.ini under /root/tor-browser/Browser)"
 fi
 
+# ── cloudflared (Cloudflare Tunnel client) ──────────────────────────────
+# NOT YET USED by any service: this only provisions the binary so tunnel
+# access can be set up and tested. Starting a tunnel needs a named tunnel
+# token/credentials, which are not in this script.
+#
+# cloudflared is not in the Debian/Ubuntu repos, so it installs from
+# Cloudflare's own GitHub release .deb. Unlike the browsers below, it is NOT
+# required for the app to run: TURN itself uses Cloudflare's hosted service
+# (stun.cloudflare.com / turn.cloudflare.com) purely via WEBRTC_ICE_SERVERS,
+# with no cloudflared process involved. cloudflared is for exposing/tunnelling
+# the HTTP port, which is a separate concern.
+if ! command -v cloudflared >/dev/null 2>&1; then
+  echo "  installing cloudflared..."
+  CLOUDFLARED_DEB=/tmp/cloudflared.deb
+  # `releases/latest/download/...` always resolves to the newest release and
+  # needs no version pinning here (verified: HTTP 200, application/octet-stream).
+  if curl -fsSLo "$CLOUDFLARED_DEB" \
+    "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb"; then
+    # Same guard as the Tor block: a failed curl would leave an empty file and
+    # apt would then fail confusingly.
+    if [ -s "$CLOUDFLARED_DEB" ]; then
+      DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 || true
+      DEBIAN_FRONTEND=noninteractive apt-get install -y "$CLOUDFLARED_DEB" >/dev/null 2>&1 || true
+    else
+      echo "  WARNING: cloudflared download was empty — skipping"
+    fi
+  else
+    echo "  WARNING: could not download cloudflared — skipping"
+  fi
+  rm -f "$CLOUDFLARED_DEB"
+fi
+
+if command -v cloudflared >/dev/null 2>&1; then
+  echo "  cloudflared installed: $(cloudflared --version 2>&1 | head -1)"
+else
+  echo "  cloudflared NOT installed (tunnel access will not be available)"
+fi
+
 # Stop the previous run.
 #
 # Order matters. Ask node to shut down GRACEFULLY first so the teardown in
