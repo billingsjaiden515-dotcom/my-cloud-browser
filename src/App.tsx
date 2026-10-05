@@ -27,6 +27,7 @@ const BROWSER_META: Record<string, { label: string }> = {
   firefox:  { label: 'Firefox' },
   brave:    { label: 'Brave' },
   vivaldi:  { label: 'Vivaldi' },
+  opera:    { label: 'Opera' },
 };
 
 export default function App() {

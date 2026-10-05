@@ -106,6 +106,52 @@ else
   echo "  cloudflared NOT installed (tunnel access will not be available)"
 fi
 
+# ── Opera (regular; NOT Opera GX, which has no Linux build) ─────────────
+# Installed from Opera's own APT repository rather than a direct .deb URL.
+#
+# The direct download URL from the original spec
+#   https://download.opera.com/download/get/?partner=www&opsys=Linux&package=deb
+# returns HTTP 403 (verified, and 403 even with a browser User-Agent), and the
+# versioned path download.opera.com/download/stable/opera-stable_amd64.deb also
+# 403s. So a .deb fetch would fail silently on the VPS.
+#
+# The APT route is verified working from here:
+#   https://deb.opera.com/archive.key                       -> HTTP 200
+#   https://deb.opera.com/opera-stable/dists/stable/Release -> HTTP 200,
+#     advertising Components: non-free and Architectures: i386 amd64 arm64
+# (Note the component is `non-free`, not `main`.)
+#
+# Like the Brave block above, the key and sources.list entry are written inside
+# the `command -v` guard, so re-running is a no-op.
+if ! command -v opera >/dev/null 2>&1; then
+  echo "  installing opera..."
+  # gnupg is required and is NOT preinstalled here: Opera publishes an
+  # ASCII-armored archive.key (verified: it begins
+  # "-----BEGIN PGP PUBLIC KEY BLOCK-----") and no pre-dearmored .gpg exists
+  # (deb.opera.com/opera-archive-keyring.gpg -> 404), so apt's signed-by= needs
+  # the binary form. Without gpg the keyring is never written and Opera silently
+  # never installs. Same shape as the xz-utils dependency Tor needed.
+  if ! command -v gpg >/dev/null 2>&1; then
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 || true
+    DEBIAN_FRONTEND=noninteractive apt-get install -y gnupg >/dev/null 2>&1 || true
+  fi
+  if curl -fsSL https://deb.opera.com/archive.key \
+      | gpg --dearmor > /usr/share/keyrings/opera-archive-keyring.gpg 2>/dev/null; then
+    echo "deb [signed-by=/usr/share/keyrings/opera-archive-keyring.gpg] https://deb.opera.com/opera-stable stable non-free" \
+      > /etc/apt/sources.list.d/opera-stable.list
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 || true
+    DEBIAN_FRONTEND=noninteractive apt-get install -y opera >/dev/null 2>&1 || true
+  else
+    echo "  WARNING: could not fetch Opera's signing key — skipping"
+  fi
+fi
+
+if command -v opera >/dev/null 2>&1; then
+  echo "  opera installed: $(opera --version 2>&1 | head -1)"
+else
+  echo "  opera NOT installed (will show as unavailable in the dropdown)"
+fi
+
 # Stop the previous run.
 #
 # Order matters. Ask node to shut down GRACEFULLY first so the teardown in

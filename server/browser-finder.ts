@@ -57,6 +57,14 @@ vivaldi: [
     '/usr/bin/vivaldi',
     '/opt/vivaldi/vivaldi',
   ],
+  opera: [
+    '/Applications/Opera.app/Contents/MacOS/Opera',
+    // Debian's opera-stable package installs /usr/bin/opera-stable; /usr/bin/opera
+    // is the usual name for other builds and for the macOS app bundle.
+    '/usr/bin/opera',
+    '/usr/bin/opera-stable',
+    '/opt/opera/opera',
+  ],
 };
 
 function findInNixStore(binary: string): string | null {
@@ -186,6 +194,21 @@ export function getBrowserInfo(): BrowserInfo[] {
     displayName: 'Vivaldi',
     executablePath: vivaldiPath || '',
     available: !!vivaldiPath,
+  });
+
+  // ── Opera (regular; NOT Opera GX) ────────────────────────────────────
+  // Chromium-based, so isChromiumFamily() gives it Chromium's launch options,
+  // flags, CDP diagnostics and resize path -- only the binary differs. Opera GX
+  // is deliberately absent: it has no Linux build, so listing it would only
+  // ever render as an unavailable entry. CHROMIUM_FAMILY still lists 'opera_gx'
+  // so that if a build ever appears it is routed correctly on first use.
+  const operaPath = findExecutable('opera') || findExecutable('opera-stable') ||
+    BROWSER_PATHS.opera.find(p => existsSync(p)) || null;
+  browsers.push({
+    name: 'opera',
+    displayName: 'Opera',
+    executablePath: operaPath || '',
+    available: !!operaPath,
   });
 
   return browsers;

@@ -118,6 +118,7 @@ const CHROME_TOP_FALLBACK: Record<string, number> = {
   brave: 78,       // estimate: Brave reported innerHeight 972 of a 1053 window
   vivaldi: 78,     // estimate: Vivaldi's chrome is Blink-based, same as Brave
   firefox: 88,     // estimate: Gecko tab bar + toolbar, taller than Blink's
+  opera: 78,       // estimate: Blink-based, same family as Brave/Vivaldi
 };
 
 const WINDOW_CLASSES: Record<string, string[]> = {
@@ -131,6 +132,12 @@ const WINDOW_CLASSES: Record<string, string[]> = {
   // `[Geometry] class="..."` log prints every class tried and the IDs each
   // returned, so the correct string is visible without guesswork.
   vivaldi: ['vivaldi-stable', 'Vivaldi-stable', 'vivaldi', 'Vivaldi'],
+  // Opera's WM_CLASS is the binary name. Debian's package produces
+  // `opera-stable`; other builds and the macOS bundle use `opera`, and some
+  // builds capitalise it. Like Vivaldi's entry this is NOT verified against a
+  // live X server -- if geometry measures wrong, the `[Geometry] class="..."`
+  // log prints every class tried and the IDs each returned.
+  opera: ['opera-stable', 'opera', 'Opera'],
 };
 
 export class BrowserSession {
@@ -454,9 +461,21 @@ export class BrowserSession {
     // what it opens at startup, so leaving it is consistent with "show the
     // browser's default page" rather than a special case for Firefox.
     if (this.browserType !== 'firefox') {
-      const newTabUrl = 'chrome://newtab';
-      console.log(`[BrowserSession] Opening new tab for ${this.browserType}: ${newTabUrl}`);
-      await page.goto(newTabUrl, {
+      // Start-page URL is per browser. Opera is Chromium-based but does NOT
+      // accept chrome://newtab under automation -- it fails with
+      // net::ERR_INVALID_URL, so a shared chrome://newtab would leave every
+      // Opera session erroring out. Measured across all four Chromium-family
+      // browsers:
+      //   chromium  chrome://newtab  -> chrome://new-tab-page/       OK
+      //   brave     chrome://newtab  -> chrome://newtab/            OK
+      //   vivaldi   chrome://newtab  -> chrome://vivaldi-webui/...  OK
+      //   opera     chrome://newtab  -> net::ERR_INVALID_URL       FAILS
+      //            opera://startpageshared -> chrome://startpageshared/ OK
+      const startUrl = this.browserType === 'opera'
+        ? 'opera://startpageshared'
+        : 'chrome://newtab';
+      console.log(`[BrowserSession] Opening new tab for ${this.browserType}: ${startUrl}`);
+      await page.goto(startUrl, {
         waitUntil: 'domcontentloaded',
         timeout: 20000,
       }).catch(() => {

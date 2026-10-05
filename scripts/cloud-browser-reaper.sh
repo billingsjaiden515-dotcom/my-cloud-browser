@@ -40,13 +40,12 @@
 
 set -u
 
-# `firefox`, `brave` and `vivaldi` are matched alongside chromium so an
-# orphaned browser from a dead server is reaped too. Without them, a server
+# `firefox`, `brave`, `vivaldi` and `opera` are matched alongside chromium so
+# an orphaned browser from a dead server is reaped too. Without them, a server
 # crash during such a session leaks the whole browser process tree (parent +
 # content/GPU/utility processes), which is the exact orphan problem this reaper
-# exists to prevent. Brave's binary is brave-browser and Vivaldi's is
-# vivaldi-stable, hence the separate tokens.
-TARGET_RE="${CB_REAPER_TARGET_RE:-chromium|firefox|brave|vivaldi|ffmpeg|Xvfb}"
+# exists to prevent. Each has a differently-named binary, hence the tokens.
+TARGET_RE="${CB_REAPER_TARGET_RE:-chromium|firefox|brave|vivaldi|opera|ffmpeg|Xvfb}"
 NODE_RE="${CB_REAPER_NODE_RE:-node.*dist-server/server/main.js}"
 
 # Process names that are NEVER killed, in either kill path, even when they look
@@ -72,7 +71,10 @@ NODE_RE="${CB_REAPER_NODE_RE:-node.*dist-server/server/main.js}"
 #
 # Vivaldi needs NO extra entry: verified by inspecting the installed bundle, it
 # ships `chrome_crashpad_handler`, already covered above. Do not add a
-# `vivaldi_crashpad` name on assumption -- it does not exist.
+# `vivaldi_crashpad` name on assumption -- it does not exist. Opera is the same
+# case: its bundle ships `chrome_crashpad_handler`, not an opera-prefixed fork.
+# Both were checked rather than inferred, because a missing exemption lets the
+# reaper kill the crashpad of a HEALTHY live session.
 EXEMPT_RE="${CB_REAPER_EXEMPT_RE:-chrome_crashpad|chrome_crashpad_handler|brave_crashpad|brave_crashpad_handler}"
 
 ts() { date '+%Y-%m-%dT%H:%M:%S%z'; }
