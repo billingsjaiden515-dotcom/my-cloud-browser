@@ -88,6 +88,13 @@ export default function App() {
   // running, not the dropdown value. Once disconnected, it falls back to the
   // current selection so the tab previews the browser you are about to start.
   // With no session and no meaningful selection it reverts to Chromium.
+  // Favicon + document title ─────────────────────────────────────────────
+  // The favicon set is driven by BROWSER_META, so any browser in the
+  // dropdown must also have a public/favicon-<name>.svg tracked in the repo
+  // and served by Vite. Chromium, Firefox, Brave, Vivaldi, and Opera all
+  // resolve through the single generic link below, so no per-browser branch
+  // is needed. (BROWSER_META keys: chromium, firefox, brave, vivaldi, opera.)
+
   const activeBrowser: string = isConnected ? (runningBrowser ?? selectedBrowser) : selectedBrowser;
   useEffect(() => {
     const name = BROWSER_META[activeBrowser] ? activeBrowser : 'chromium';
