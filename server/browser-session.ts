@@ -116,7 +116,7 @@ const FIREFOX_NEW_TAB_HTML = `<!doctype html>
 const CHROME_TOP_FALLBACK: Record<string, number> = {
   chromium: 143,   // exact for this deployment, cross-checked historically
   brave: 78,       // estimate: Brave reported innerHeight 972 of a 1053 window
-  vivaldi: 78,     // estimate: Vivaldi's chrome is Blink-based, same as Brave
+  vivaldi: 124,    // estimate: matches Opera's measured chromeTop=124
   firefox: 88,     // estimate: Gecko tab bar + toolbar, taller than Blink's
   opera: 78,       // estimate: Blink-based, same family as Brave/Vivaldi
 };
