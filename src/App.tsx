@@ -96,6 +96,15 @@ export default function App() {
   // is needed. (BROWSER_META keys: chromium, firefox, brave, vivaldi, opera.)
 
   const activeBrowser: string = isConnected ? (runningBrowser ?? selectedBrowser) : selectedBrowser;
+  // Cache-busted favicon swap: Chrome caches favicons by URL string, so a raw
+  // /favicon-<name>.svg href would stick on the first dropdown selection. A
+  // page-wide version counter bumps on every change so each swap is a unique
+  // URL that the browser re-fetches immediately.
+  const [faviconVersion, setFaviconVersion] = useState(0);
+  useEffect(() => {
+    setFaviconVersion((v) => v + 1);
+  }, [activeBrowser, isConnected]);
+
   useEffect(() => {
     const name = BROWSER_META[activeBrowser] ? activeBrowser : 'chromium';
     const meta = BROWSER_META[name];
@@ -110,9 +119,9 @@ export default function App() {
       document.head.appendChild(link);
     }
     link.type = 'image/svg+xml';
-    link.href = `/favicon-${name}.svg`;
+    link.href = `/favicon-${name}.svg?v=${faviconVersion}`;
     document.title = isConnected ? `Cloud Browser (${meta.label})` : 'Cloud Browser';
-  }, [activeBrowser, isConnected]);
+  }, [name, faviconVersion, isConnected]);
 
   // Escape key to exit immersive
   useEffect(() => {
