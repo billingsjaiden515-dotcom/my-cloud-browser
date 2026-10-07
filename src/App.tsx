@@ -118,8 +118,14 @@ export default function App() {
       link.rel = 'icon';
       document.head.appendChild(link);
     }
-    link.type = 'image/svg+xml';
-    link.href = `/favicon-${name}.svg?v=${faviconVersion}`;
+    link.type = 'image/png';
+    // Vivaldi and Opera use their PNG icons from public/icons/ directly, so the
+    // tab and the dropdown can't drift. Chromium, Firefox and Brave keep their
+    // SVG favicon wrappers (which encode the full colour + transparency).
+    const faviconUrl = (name === 'vivaldi' || name === 'opera')
+      ? `/icons/${name}.png`
+      : `/favicon-${name}.svg`;
+    link.href = `${faviconUrl}?v=${faviconVersion}`;
     document.title = isConnected ? `Cloud Browser (${meta.label})` : 'Cloud Browser';
   }, [name, faviconVersion, isConnected]);
 
