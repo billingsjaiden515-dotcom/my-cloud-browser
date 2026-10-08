@@ -32,11 +32,13 @@ export interface TabInfo {
  * browser is opened at this size so they all look identical: Chromium and
  * Brave via --window-size, Firefox via -width/-height. Keep all three in step.
  *
- * Slightly under the display so the window's own border/shadow is not clipped
- * at the right/bottom edge.
+ * The capture region is 1920x1080 and every browser is sized to the full
+ * display -- no right-edge gap for Chromium, Brave, Vivaldi or Opera, and no
+ * right-edge gap for Firefox either. The only intentional black strip is the
+ * bottom (the Cloud Browser UI), which is deliberately excluded from capture.
  */
-const WANTED_WIN_W = 1900;
-const WANTED_WIN_H = 1053;
+const WANTED_WIN_W = 1920;
+const WANTED_WIN_H = 1080;
 
 /**
  * `xdotool search --class` window classes per browser.
@@ -341,7 +343,7 @@ export class BrowserSession {
         // This does NOT affect chromeTop: that is measured from the real
         // rendered window via xdotool in measureChromeGeometry(), never
         // assumed from these numbers.
-        args: ['-width=1900', '-height=1060'],
+        args: ['-width=1920', '-height=1080'],
         extraPrefsFirefox: {
           'browser.shell.checkDefaultBrowser': false,
           'browser.startup.homepage_override.mstone': 'ignore',
@@ -404,10 +406,11 @@ export class BrowserSession {
           // browser look the same. Keep this in step with the capture region
           // (1920x1080) and with Firefox's -width/-height above.
           //
-          // 1900x1053 (not 1060) leaves a few pixels of margin inside the
-          // display, matching what Firefox actually reports after its window
-          // manager settles the frame.
-          '--window-size=1900,1053',
+          // 1920x1080 matches the Xvfb display exactly so there is no right-edge
+          // black strip in the stream. Chromium and the Blink-based browsers
+          // accept --window-size=1920,1080 without complaint; the window border
+          ///shadow is outside the capture region and is not clipped here.
+          '--window-size=1920,1080',
           // Show tab strip in headful mode. SuppressUnsupportedFlagWarning now
           // rides along in `disableFeatures` above -- it must NOT be repeated
           // here as a second --disable-features, or only one of the two survives.
