@@ -41,12 +41,13 @@ fi
 # guard, so re-running is a no-op.
 if ! command -v microsoft-edge >/dev/null 2>&1; then
   echo "  installing microsoft-edge..."
-  curl -fsSLo /usr/share/keyrings/microsoft-edge-archive-keyring.gpg \
-    https://packages.microsoft.com/keys/microsoft.asc || true
+  curl -fsSLo /tmp/ms-edge.key https://packages.microsoft.com/keys/microsoft.asc || true
+  gpg --dearmor < /tmp/ms-edge.key > /usr/share/keyrings/microsoft-edge-archive-keyring.gpg 2>/dev/null || true
+  rm -f /tmp/ms-edge.key
   echo "deb [signed-by=/usr/share/keyrings/microsoft-edge-archive-keyring.gpg] https://packages.microsoft.com/repos/edge stable main" \
     > /etc/apt/sources.list.d/microsoft-edge.list
   DEBIAN_FRONTEND=noninteractive apt-get update -qq \
-    && apt-get install -y microsoft-edge >/dev/null 2>&1 || true
+    && apt-get install -y microsoft-edge-stable >/dev/null 2>&1 || true
 fi
 
 # Vivaldi publishes NO apt repository -- only a .deb per release. The URL is
