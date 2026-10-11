@@ -46,7 +46,9 @@ set -u
 # (parent + content/GPU/utility processes), which is the exact orphan problem
 # this reaper exists to prevent. Each has a differently-named binary, hence the
 # tokens. Edge reuses the Chromium crashpad name and is exempt via EXEMPT_RE.
-TARGET_RE="${CB_REAPER_TARGET_RE:-chromium|firefox|brave|vivaldi|opera|edge|ffmpeg|Xvfb}"
+# Helium is the same class of Chromium-based browser and is added here for the
+# same reason.
+TARGET_RE="${CB_REAPER_TARGET_RE:-chromium|firefox|brave|vivaldi|opera|edge|helium|ffmpeg|Xvfb}"
 NODE_RE="${CB_REAPER_NODE_RE:-node.*dist-server/server/main.js}"
 
 # Process names that are NEVER killed, in either kill path, even when they look

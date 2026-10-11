@@ -46,6 +46,10 @@ const BROWSER_PATHS: Record<string, string[]> = {
     '/usr/bin/microsoft-edge-stable',
     '/snap/bin/microsoft-edge',
   ],
+  helium: [
+    '/usr/bin/helium',
+    '/usr/bin/helium-browser',
+  ],
   firefox: [
     '/Applications/Firefox.app/Contents/MacOS/firefox',
     '/usr/bin/firefox',
