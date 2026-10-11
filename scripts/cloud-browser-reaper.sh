@@ -40,12 +40,13 @@
 
 set -u
 
-# `firefox`, `brave`, `vivaldi` and `opera` are matched alongside chromium so
-# an orphaned browser from a dead server is reaped too. Without them, a server
-# crash during such a session leaks the whole browser process tree (parent +
-# content/GPU/utility processes), which is the exact orphan problem this reaper
-# exists to prevent. Each has a differently-named binary, hence the tokens.
-TARGET_RE="${CB_REAPER_TARGET_RE:-chromium|firefox|brave|vivaldi|opera|ffmpeg|Xvfb}"
+# `firefox`, `brave`, `vivaldi`, `opera` and `edge` are matched alongside
+# chromium so an orphaned browser from a dead server is reaped too. Without them,
+# a server crash during such a session leaks the whole browser process tree
+# (parent + content/GPU/utility processes), which is the exact orphan problem
+# this reaper exists to prevent. Each has a differently-named binary, hence the
+# tokens. Edge reuses the Chromium crashpad name and is exempt via EXEMPT_RE.
+TARGET_RE="${CB_REAPER_TARGET_RE:-chromium|firefox|brave|vivaldi|opera|edge|ffmpeg|Xvfb}"
 NODE_RE="${CB_REAPER_NODE_RE:-node.*dist-server/server/main.js}"
 
 # Process names that are NEVER killed, in either kill path, even when they look

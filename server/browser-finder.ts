@@ -20,7 +20,7 @@ export interface BrowserInfo {
  * three behaviours on `=== 'chromium'` instead would have silently given
  * every future Chromium-based browser a BiDi-shaped, CDP-less session.
  */
-export const CHROMIUM_FAMILY = new Set(['chromium', 'brave', 'vivaldi', 'opera', 'opera_gx']);
+export const CHROMIUM_FAMILY = new Set(['chromium', 'brave', 'vivaldi', 'opera', 'opera_gx', 'edge', 'helium']);
 
 export function isChromiumFamily(browserType: string): boolean {
   return CHROMIUM_FAMILY.has(browserType);
@@ -38,6 +38,13 @@ const BROWSER_PATHS: Record<string, string[]> = {
     '/usr/bin/google-chrome',
     '/usr/bin/google-chrome-stable',
     '/snap/bin/chromium',
+  ],
+  edge: [
+    '/nix/store',  // checked dynamically below
+    // Debian/Ubuntu Microsoft edge repo: /usr/bin/microsoft-edge
+    '/usr/bin/microsoft-edge',
+    '/usr/bin/microsoft-edge-stable',
+    '/snap/bin/microsoft-edge',
   ],
   firefox: [
     '/Applications/Firefox.app/Contents/MacOS/firefox',

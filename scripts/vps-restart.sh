@@ -35,15 +35,18 @@ fi
 
 # Brave is NOT in Debian/Ubuntu's repos -- it ships its own apt repository, so
 # the GPG key and the sources.list.d entry have to be added before installing.
-# Both writes are inside the same guard, so re-running is a no-op.
-if ! command -v brave-browser >/dev/null 2>&1; then
-  echo "  installing brave-browser..."
-  curl -fsSLo /usr/share/keyrings/brave-browser-archive-keyring.gpg \
-    https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg || true
-  echo "deb [signed-by=/usr/share/keyrings/brave-browser-archive-keyring.gpg] https://brave-browser-apt-release.s3.brave.com/ stable main" \
-    > /etc/apt/sources.list.d/brave-browser-release.list
+# Edge is a Chromium-based browser packaged by Microsoft as an apt repository.
+# It is NOT in Debian/Ubuntu's main repo, so the GPG key and the sources.list.d
+# entry have to be added before installing. Both writes are inside the same
+# guard, so re-running is a no-op.
+if ! command -v microsoft-edge >/dev/null 2>&1; then
+  echo "  installing microsoft-edge..."
+  curl -fsSLo /usr/share/keyrings/microsoft-edge-archive-keyring.gpg \
+    https://packages.microsoft.com/keys/microsoft.asc || true
+  echo "deb [signed-by=/usr/share/keyrings/microsoft-edge-archive-keyring.gpg] https://packages.microsoft.com/repos/edge stable main" \
+    > /etc/apt/sources.list.d/microsoft-edge.list
   DEBIAN_FRONTEND=noninteractive apt-get update -qq \
-    && apt-get install -y brave-browser >/dev/null 2>&1 || true
+    && apt-get install -y microsoft-edge >/dev/null 2>&1 || true
 fi
 
 # Vivaldi publishes NO apt repository -- only a .deb per release. The URL is

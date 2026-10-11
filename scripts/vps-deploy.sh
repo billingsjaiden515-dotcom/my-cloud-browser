@@ -15,7 +15,8 @@ apt update && apt install -y \
   libnss3 libatk-bridge2.0-0 libdrm2 libxkbcommon0 \
   libxcomposite1 libxdamage1 libxrandr2 libgbm1 \
   libpango-1.0-0 libcairo2 libasound2 libatk1.0-0 \
-  libxshmfence1 libgtk-3-0 xvfb
+  libxshmfence1 libgtk-3-0 xvfb \
+  microsoft-edge
 
 # Step 2: Install Node.js 22
 echo "[2/6] Installing Node.js 22..."

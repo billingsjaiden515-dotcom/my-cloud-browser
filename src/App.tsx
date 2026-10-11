@@ -28,6 +28,7 @@ const BROWSER_META: Record<string, { label: string }> = {
   brave:    { label: 'Brave' },
   vivaldi:  { label: 'Vivaldi' },
   opera:    { label: 'Opera' },
+  edge:     { label: 'Edge' },
 };
 
 export default function App() {
