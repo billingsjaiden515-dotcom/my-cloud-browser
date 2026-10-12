@@ -40,7 +40,6 @@ const BROWSER_PATHS: Record<string, string[]> = {
     '/snap/bin/chromium',
   ],
   edge: [
-    '/nix/store',  // checked dynamically below
     // Debian/Ubuntu Microsoft edge repo: /usr/bin/microsoft-edge
     '/usr/bin/microsoft-edge',
     '/usr/bin/microsoft-edge-stable',
@@ -220,6 +219,33 @@ export function getBrowserInfo(): BrowserInfo[] {
     displayName: 'Opera',
     executablePath: operaPath || '',
     available: !!operaPath,
+  });
+
+  // ── Microsoft Edge ───────────────────────────────────────────────────
+  // Chromium-based, so isChromiumFamily() routes it through Chromium's exact
+  // launch flags, CDP diagnostics and resize path -- only the binary differs.
+  // Ships from Microsoft's apt repo (packages.microsoft.com/repos/edge); the
+  // microsoft-edge-stable package provides the /usr/bin/microsoft-edge
+  // wrapper, so either name resolves.
+  const edgePath = findExecutable('microsoft-edge') || findExecutable('microsoft-edge-stable') ||
+    BROWSER_PATHS.edge.find(p => existsSync(p)) || null;
+  browsers.push({
+    name: 'edge',
+    displayName: 'Microsoft Edge',
+    executablePath: edgePath || '',
+    available: !!edgePath,
+  });
+
+  // ── Helium ───────────────────────────────────────────────────────────
+  // Chromium-based (privacy-focused Blink browser). Same routing as Edge:
+  // isChromiumFamily() supplies Chromium's launch options verbatim.
+  const heliumPath = findExecutable('helium') || findExecutable('helium-browser') ||
+    BROWSER_PATHS.helium.find(p => existsSync(p)) || null;
+  browsers.push({
+    name: 'helium',
+    displayName: 'Helium',
+    executablePath: heliumPath || '',
+    available: !!heliumPath,
   });
 
   return browsers;
