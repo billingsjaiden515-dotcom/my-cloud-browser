@@ -120,12 +120,19 @@ const CHROME_TOP_FALLBACK: Record<string, number> = {
   brave: 175,      // estimate: cross-checked on VPS, innerHeight 972 of 1053
   vivaldi: 124,    // estimate: matches Opera's measured chromeTop=124
   firefox: 88,     // estimate: Gecko tab bar + toolbar, taller than Blink's
+  librewolf: 88,   // same Gecko chrome/tab-bar as Firefox (LibreWolf is a Firefox fork)
   opera: 78,       // estimate: Blink-based, same family as Brave/Vivaldi
 };
 
 const WINDOW_CLASSES: Record<string, string[]> = {
   chromium: ['chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable', 'Chromium', 'crx_'],
   firefox: ['Navigator', 'firefox'],
+  // LibreWolf is Firefox-based. Gecko browsers report WM_CLASS res_class as
+  // the product/binary name (`librewolf`) but Firefox's historic Gecko res_class
+  // is `Navigator`, so all three spellings are probed. The `[Geometry]` log
+  // prints every class tried and the IDs each returned, so the correct one is
+  // confirmed on the VPS rather than guessed.
+  librewolf: ['librewolf', 'LibreWolf', 'Navigator'],
   brave: ['brave-browser', 'brave'],
   // Vivaldi sets WM_CLASS from its binary name. Debian installs it as
   // `vivaldi-stable`, and the class can be capitalised depending on the build,

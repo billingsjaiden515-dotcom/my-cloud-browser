@@ -73,6 +73,24 @@ if ! command -v helium >/dev/null 2>&1; then
     && apt-get install -y helium-bin >/dev/null 2>&1 || true
 fi
 
+# LibreWolf is a Firefox-based (Gecko) privacy browser. It ships its own apt
+# repository at repo.librewolf.net with a SINGLE distro-agnostic suite
+# (`librewolf`), so no lsb_release codename detection is needed and the same
+# sources entry works on Debian and Ubuntu alike. The package is `librewolf` and
+# it depends on old-style lib names (libasound2, libglib2.0-0, ...), NOT the t64
+# suite -- unlike Helium, it therefore installs cleanly on Ubuntu 22.04+/Debian
+# 12+. keyring.gpg is served already in binary OpenPGP form, so it is written
+# straight to the keyrings dir as signed-by (no gpg --dearmor). Guarded so
+# re-running is a no-op.
+if ! command -v librewolf >/dev/null 2>&1; then
+  echo "  installing librewolf..."
+  curl -fsSLo /usr/share/keyrings/librewolf.gpg https://repo.librewolf.net/keyring.gpg || true
+  echo "deb [signed-by=/usr/share/keyrings/librewolf.gpg] https://repo.librewolf.net/ librewolf main" \
+    > /etc/apt/sources.list.d/librewolf.list
+  DEBIAN_FRONTEND=noninteractive apt-get update -qq \
+    && apt-get install -y librewolf >/dev/null 2>&1 || true
+fi
+
 # Vivaldi publishes NO apt repository -- only a .deb per release. The URL is
 # version-less and always serves the current stable build (verified: HTTP 200,
 # no redirect), so it is re-fetched on every restart unless VIVALDI_SKIP is

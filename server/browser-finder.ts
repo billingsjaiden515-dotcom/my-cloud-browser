@@ -55,6 +55,13 @@ const BROWSER_PATHS: Record<string, string[]> = {
     '/usr/bin/firefox-esr',
     '/snap/bin/firefox',
   ],
+  librewolf: [
+    '/Applications/LibreWolf.app/Contents/MacOS/librewolf',
+    // Debian/Ubuntu librewolf package: /usr/bin/librewolf wrapper ->
+    // /usr/lib/librewolf/librewolf inner binary.
+    '/usr/bin/librewolf',
+    '/usr/lib/librewolf/librewolf',
+  ],
   brave: [
     '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
     '/usr/bin/brave-browser',
@@ -163,6 +170,22 @@ export function getBrowserInfo(): BrowserInfo[] {
     displayName: 'Mozilla Firefox',
     executablePath: firefoxPath || '',
     available: !!firefoxPath,
+  });
+
+  // ── LibreWolf ────────────────────────────────────────────────────────
+  // Firefox-based (Gecko). isChromiumFamily() is false for it, so it takes the
+  // identical WebDriver BiDi launch path as Firefox: no CDP flags, no CDP
+  // network events, Gecko-native -width/-height args, same chromeTop fallback.
+  // Only the binary differs. Ships from the LibreWolf apt repo
+  // (repo.librewolf.net, single distro-agnostic suite `librewolf`); the
+  // `librewolf` package provides the /usr/bin/librewolf wrapper.
+  const librewolfPath = findExecutable('librewolf') ||
+    BROWSER_PATHS.librewolf.find(p => existsSync(p)) || null;
+  browsers.push({
+    name: 'librewolf',
+    displayName: 'LibreWolf',
+    executablePath: librewolfPath || '',
+    available: !!librewolfPath,
   });
 
   // Brave

@@ -40,15 +40,16 @@
 
 set -u
 
-# `firefox`, `brave`, `vivaldi`, `opera` and `edge` are matched alongside
-# chromium so an orphaned browser from a dead server is reaped too. Without them,
-# a server crash during such a session leaks the whole browser process tree
-# (parent + content/GPU/utility processes), which is the exact orphan problem
-# this reaper exists to prevent. Each has a differently-named binary, hence the
-# tokens. Edge reuses the Chromium crashpad name and is exempt via EXEMPT_RE.
-# Helium is the same class of Chromium-based browser and is added here for the
-# same reason.
-TARGET_RE="${CB_REAPER_TARGET_RE:-chromium|firefox|brave|vivaldi|opera|edge|helium|ffmpeg|Xvfb}"
+# `firefox`, `librewolf`, `brave`, `vivaldi`, `opera` and `edge` are matched
+# alongside chromium so an orphaned browser from a dead server is reaped too.
+# Without them, a server crash during such a session leaks the whole browser
+# process tree (parent + content/GPU/utility processes), which is the exact
+# orphan problem this reaper exists to prevent. Each has a differently-named
+# binary, hence the tokens. Edge reuses the Chromium crashpad name and is
+# exempt via EXEMPT_RE. Helium is the same class of Chromium-based browser and
+# is added here for the same reason. LibreWolf's inner binary is `librewolf`,
+# distinct from `firefox`, hence its own token.
+TARGET_RE="${CB_REAPER_TARGET_RE:-chromium|firefox|librewolf|brave|vivaldi|opera|edge|helium|ffmpeg|Xvfb}"
 NODE_RE="${CB_REAPER_NODE_RE:-node.*dist-server/server/main.js}"
 
 # Process names that are NEVER killed, in either kill path, even when they look
@@ -78,6 +79,15 @@ NODE_RE="${CB_REAPER_NODE_RE:-node.*dist-server/server/main.js}"
 # case: its bundle ships `chrome_crashpad_handler`, not an opera-prefixed fork.
 # Both were checked rather than inferred, because a missing exemption lets the
 # reaper kill the crashpad of a HEALTHY live session.
+#
+# LibreWolf/Firefox (Gecko) needs NO entry here. The `librewolf` token in
+# TARGET_RE matches the whole librewolf process tree, but Gecko has no
+# Chromium-style crashpad sidecar that detaches and reparents to init during a
+# HEALTHY live session -- Firefox's crashreporter runs only AFTER a crash to
+# upload the minidump, then exits. So there is no persistent helper that could
+# be misidentified as an orphan. All librewolf child processes (content/gpu/
+# rdd) stay descendants of the main librewolf process and are only reaped when
+# the server that owns them is actually gone -- the correct behaviour.
 EXEMPT_RE="${CB_REAPER_EXEMPT_RE:-chrome_crashpad|chrome_crashpad_handler|brave_crashpad|brave_crashpad_handler}"
 
 ts() { date '+%Y-%m-%dT%H:%M:%S%z'; }
