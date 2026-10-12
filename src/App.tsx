@@ -32,6 +32,7 @@ const BROWSER_META: Record<string, { label: string }> = {
   helium:   { label: 'Helium' },
   librewolf: { label: 'LibreWolf' },
   zen: { label: 'Zen' },
+  floorp: { label: 'Floorp' },
 };
 
 export default function App() {

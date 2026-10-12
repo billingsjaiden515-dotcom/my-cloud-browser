@@ -70,6 +70,13 @@ const BROWSER_PATHS: Record<string, string[]> = {
     // Per-user official install.sh run as root.
     '/root/.tarball-installations/zen/zen',
   ],
+  floorp: [
+    '/Applications/Floorp.app/Contents/MacOS/floorp',
+    // Official PPA package `floorp`: /usr/bin/floorp wrapper ->
+    // /usr/lib/floorp/floorp inner binary.
+    '/usr/bin/floorp',
+    '/usr/lib/floorp/floorp',
+  ],
   brave: [
     '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
     '/usr/bin/brave-browser',
@@ -208,6 +215,19 @@ export function getBrowserInfo(): BrowserInfo[] {
     displayName: 'Zen Browser',
     executablePath: zenPath || '',
     available: !!zenPath,
+  });
+
+  // ── Floorp ───────────────────────────────────────────────────────────
+  // Firefox-based (Gecko) like LibreWolf/Zen, so isChromiumFamily() is false and
+  // it takes the identical WebDriver BiDi launch path. Ships from its own PPA
+  // (ppa.floorp.app); the `floorp` package provides the /usr/bin/floorp wrapper.
+  const floorpPath = findExecutable('floorp') ||
+    BROWSER_PATHS.floorp.find(p => existsSync(p)) || null;
+  browsers.push({
+    name: 'floorp',
+    displayName: 'Floorp',
+    executablePath: floorpPath || '',
+    available: !!floorpPath,
   });
 
   // Brave

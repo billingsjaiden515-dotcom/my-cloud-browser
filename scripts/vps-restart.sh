@@ -107,6 +107,20 @@ if [ ! -x /opt/zen/zen ]; then
   rm -f /tmp/zen.tar.xz
 fi
 
+# Floorp is a Firefox-based (Gecko) browser with its own official PPA
+# (ppa.floorp.app). This mirrors the exact official installer: dearmor the PPA
+# GPG key into the keyrings dir, then drop in the pre-built Floorp.list (a flat
+# `$(ARCH) ./` repo). Package is `floorp`. Guarded so re-running is a no-op.
+if ! command -v floorp >/dev/null 2>&1; then
+  echo "  installing floorp..."
+  curl -fsSL https://ppa.floorp.app/KEY.gpg \
+    | gpg --batch --yes --dearmor -o /usr/share/keyrings/Floorp.gpg || true
+  curl -fsSL --compressed -o /etc/apt/sources.list.d/Floorp.list \
+    "https://ppa.floorp.app/Floorp.list" || true
+  DEBIAN_FRONTEND=noninteractive apt-get update -qq \
+    && apt-get install -y floorp >/dev/null 2>&1 || true
+fi
+
 # Vivaldi publishes NO apt repository -- only a .deb per release. The URL is
 # version-less and always serves the current stable build (verified: HTTP 200,
 # no redirect), so it is re-fetched on every restart unless VIVALDI_SKIP is
