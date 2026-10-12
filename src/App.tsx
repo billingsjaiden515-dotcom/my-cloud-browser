@@ -31,6 +31,7 @@ const BROWSER_META: Record<string, { label: string }> = {
   edge:     { label: 'Edge' },
   helium:   { label: 'Helium' },
   librewolf: { label: 'LibreWolf' },
+  zen: { label: 'Zen' },
 };
 
 export default function App() {

@@ -91,6 +91,22 @@ if ! command -v librewolf >/dev/null 2>&1; then
     && apt-get install -y librewolf >/dev/null 2>&1 || true
 fi
 
+# Zen is a Firefox-based (Gecko) browser with NO apt/deb repository -- its
+# official Linux distribution is a tarball (or Flathub). We install the tarball
+# system-wide to /opt/zen so the server (running as root) can launch the real
+# binary /opt/zen/zen directly via Puppeteer; the tarball extracts a top-level
+# `zen/` dir, stripped here so the binary lands at /opt/zen/zen. Gecko, so it
+# takes Firefox's BiDi launch path. Guarded so re-running is a no-op.
+if [ ! -x /opt/zen/zen ]; then
+  echo "  installing zen (official tarball)..."
+  mkdir -p /opt/zen
+  curl -fsSL -o /tmp/zen.tar.xz \
+    https://github.com/zen-browser/desktop/releases/latest/download/zen.linux-x86_64.tar.xz || true
+  tar -xJf /tmp/zen.tar.xz -C /opt/zen --strip-components=1 2>/dev/null || true
+  chmod +x /opt/zen/zen 2>/dev/null || true
+  rm -f /tmp/zen.tar.xz
+fi
+
 # Vivaldi publishes NO apt repository -- only a .deb per release. The URL is
 # version-less and always serves the current stable build (verified: HTTP 200,
 # no redirect), so it is re-fetched on every restart unless VIVALDI_SKIP is

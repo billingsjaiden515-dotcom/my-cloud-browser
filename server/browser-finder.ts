@@ -62,6 +62,14 @@ const BROWSER_PATHS: Record<string, string[]> = {
     '/usr/bin/librewolf',
     '/usr/lib/librewolf/librewolf',
   ],
+  zen: [
+    '/Applications/Zen.app/Contents/MacOS/zen',
+    // Official tarball install (no apt repo); vps-restart.sh installs the
+    // tarball to /opt/zen so the binary lands at /opt/zen/zen.
+    '/opt/zen/zen',
+    // Per-user official install.sh run as root.
+    '/root/.tarball-installations/zen/zen',
+  ],
   brave: [
     '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
     '/usr/bin/brave-browser',
@@ -186,6 +194,20 @@ export function getBrowserInfo(): BrowserInfo[] {
     displayName: 'LibreWolf',
     executablePath: librewolfPath || '',
     available: !!librewolfPath,
+  });
+
+  // ── Zen ──────────────────────────────────────────────────────────────
+  // Firefox-based (Gecko) like LibreWolf, so isChromiumFamily() is false and it
+  // takes the identical WebDriver BiDi launch path. Zen ships NO apt repo --
+  // only a tarball (or Flathub) -- so the server installs the tarball to
+  // /opt/zen and the real binary is /opt/zen/zen (see BROWSER_PATHS.zen).
+  const zenPath = findExecutable('zen') ||
+    BROWSER_PATHS.zen.find(p => existsSync(p)) || null;
+  browsers.push({
+    name: 'zen',
+    displayName: 'Zen Browser',
+    executablePath: zenPath || '',
+    available: !!zenPath,
   });
 
   // Brave

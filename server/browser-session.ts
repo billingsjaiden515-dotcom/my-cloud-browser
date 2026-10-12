@@ -121,6 +121,7 @@ const CHROME_TOP_FALLBACK: Record<string, number> = {
   vivaldi: 124,    // estimate: matches Opera's measured chromeTop=124
   firefox: 88,     // estimate: Gecko tab bar + toolbar, taller than Blink's
   librewolf: 88,   // same Gecko chrome/tab-bar as Firefox (LibreWolf is a Firefox fork)
+  zen: 88,         // estimate: Gecko chrome (Zen has a different sidebar UI); confirm via geometry log
   opera: 78,       // estimate: Blink-based, same family as Brave/Vivaldi
 };
 
@@ -133,6 +134,8 @@ const WINDOW_CLASSES: Record<string, string[]> = {
   // prints every class tried and the IDs each returned, so the correct one is
   // confirmed on the VPS rather than guessed.
   librewolf: ['librewolf', 'LibreWolf', 'Navigator'],
+  // Zen's .desktop sets StartupWMClass=zen; Gecko res_class is Navigator.
+  zen: ['zen', 'Zen', 'Navigator'],
   brave: ['brave-browser', 'brave'],
   // Vivaldi sets WM_CLASS from its binary name. Debian installs it as
   // `vivaldi-stable`, and the class can be capitalised depending on the build,
