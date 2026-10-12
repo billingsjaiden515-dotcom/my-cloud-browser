@@ -140,6 +140,12 @@ const WINDOW_CLASSES: Record<string, string[]> = {
   // live X server -- if geometry measures wrong, the `[Geometry] class="..."`
   // log prints every class tried and the IDs each returned.
   opera: ['opera-stable', 'opera', 'Opera'],
+  // Helium is Chromium-based, so WM_CLASS res_class is the product name and
+  // res_name the binary. Both spellings are tried; like Vivaldi/Opera this is
+  // NOT verified against a live X server until the VPS install -- the
+  // `[Geometry] class=\"...\"` log prints every class tried and the IDs each
+  // returned, so the correct string is visible without guesswork.
+  helium: ['helium', 'Helium'],
 };
 
 export class BrowserSession {

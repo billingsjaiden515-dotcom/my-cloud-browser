@@ -29,6 +29,7 @@ const BROWSER_META: Record<string, { label: string }> = {
   vivaldi:  { label: 'Vivaldi' },
   opera:    { label: 'Opera' },
   edge:     { label: 'Edge' },
+  helium:   { label: 'Helium' },
 };
 
 export default function App() {

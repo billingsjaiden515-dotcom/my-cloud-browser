@@ -50,6 +50,29 @@ if ! command -v microsoft-edge >/dev/null 2>&1; then
     && apt-get install -y microsoft-edge-stable >/dev/null 2>&1 || true
 fi
 
+# Helium is a privacy-focused Chromium-based browser from the Helium project
+# (helium.computer), shipped as its OWN apt repository with package name
+# helium-bin. It is NOT in Debian/Ubuntu's main repo, so the GPG key and the
+# sources.list.d entry have to be added before installing. The .deb installs the
+# browser under /opt/helium plus a /usr/bin/helium symlink -> helium-wrapper,
+# which is the exact path BROWSER_PATHS.helium resolves. Both key writes are
+# inside the same guard, so re-running is a no-op.
+#
+# NOTE: the helium-bin package Depends on the t64 library suite (libcups2t64,
+# libasound2t64, libglib2.0-0t64, ...), which only exists on Ubuntu 24.04+/Debian
+# 13+. On an older base this install fails at dependency resolution; because it is
+# guarded by `|| true` the restart still proceeds and Helium simply stays absent.
+if ! command -v helium >/dev/null 2>&1; then
+  echo "  installing helium-bin..."
+  curl -fsSLo /tmp/helium.key https://raw.githubusercontent.com/imputnet/helium-linux/main/pubkey.asc || true
+  gpg --dearmor < /tmp/helium.key > /usr/share/keyrings/helium.gpg 2>/dev/null || true
+  rm -f /tmp/helium.key
+  echo "deb [signed-by=/usr/share/keyrings/helium.gpg] https://pkg.helium.computer/deb stable main" \
+    > /etc/apt/sources.list.d/helium.list
+  DEBIAN_FRONTEND=noninteractive apt-get update -qq \
+    && apt-get install -y helium-bin >/dev/null 2>&1 || true
+fi
+
 # Vivaldi publishes NO apt repository -- only a .deb per release. The URL is
 # version-less and always serves the current stable build (verified: HTTP 200,
 # no redirect), so it is re-fetched on every restart unless VIVALDI_SKIP is
