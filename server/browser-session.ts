@@ -121,7 +121,7 @@ const CHROME_TOP_FALLBACK: Record<string, number> = {
   vivaldi: 124,    // estimate: matches Opera's measured chromeTop=124
   firefox: 88,     // estimate: Gecko tab bar + toolbar, taller than Blink's
   librewolf: 88,   // same Gecko chrome/tab-bar as Firefox (LibreWolf is a Firefox fork)
-  zen: 88,         // estimate: Gecko chrome (Zen has a different sidebar UI); confirm via geometry log
+  zen: 88,         // OBSERVED while Zen wrongly opened 1200x720; RE-MEASURE from the [Geometry] log once the 1920x1080 xdotool fix sticks (do not guess)
   floorp: 88,      // estimate: Gecko chrome/tab-bar (Floorp is a Firefox fork); confirm via geometry log
   midori: 133,     // exact for this deployment: measured on VPS 2026-10-12 (page-side MATCH); the 22px sidebar is accounted via chromeLeft
   waterfox: 88,    // estimate: Gecko chrome/tab-bar (Waterfox is a Firefox fork); confirm via geometry log
@@ -552,6 +552,14 @@ export class BrowserSession {
     // and, if it did not stick, forced with `xdotool windowsize` before
     // measureChromeGeometry() runs -- otherwise chromeTop and the click
     // coordinates would be measured against the wrong window.
+    //
+    // Zen makes this mandatory rather than cosmetic: it IGNORES Gecko's
+    // -width/-height (VPS-observed 2026-10-12: opened 1200x720 while every
+    // other Gecko fork honoured them), so xdotool is the ONLY mechanism that
+    // can size its window. enforceWindowSize() therefore polls until the
+    // window appears and RE-READS the geometry after each windowsize
+    // attempt -- the old fire-and-forget left Zen wrong because nothing
+    // verified the resize actually stuck.
     if (isHeadful) {
       await this.enforceWindowSize();
     }
@@ -1504,6 +1512,16 @@ export class BrowserSession {
    * the full 1920x1080 display, so a window that silently stayed 1280x880 shows
    * up as a black desktop border in the stream. Verifying beats assuming.
    *
+   * Zen exposed two weaknesses in the original fire-and-forget version (VPS,
+   * 2026-10-12, window stuck at 1200x720):
+   *   1. Zen IGNORES Gecko's -width/-height, so this function is the only
+   *      thing that can size its window -- if it gave up, nothing else retried.
+   *   2. A single early probe can miss or race the window, and a windowsize
+   *      that did not stick was never detected -- the measurement that followed
+   *      simply recorded whatever the browser ended up with.
+   * So: poll until the window appears, force it, RE-READ the real geometry,
+   * and retry (up to 3 forced attempts) before reporting the final size.
+   *
    * Runs BEFORE measureChromeGeometry() so chromeTop and the click-coordinate
    * maths are computed against the final window size.
    *
@@ -1514,46 +1532,90 @@ export class BrowserSession {
   private async enforceWindowSize(): Promise<void> {
     if (!process.env.DISPLAY) return;
     const classes = WINDOW_CLASSES[this.browserType] ?? WINDOW_CLASSES.chromium;
-    for (const cls of classes) {
-      const geo = await this.xdotoolWindowGeometry(cls);
-      if (!geo) continue;
-      const id = geo.id;
-      if (geo.WIDTH === this.WANTED_WIN_W && geo.HEIGHT === this.WANTED_WIN_H) {
-        console.log(`[Window] ${this.browserType} already ${geo.WIDTH}x${geo.HEIGHT} — --window-size honoured`);
-      } else {
-        console.log(
-          `[Window] ${this.browserType} opened ${geo.WIDTH}x${geo.HEIGHT}, forcing ` +
-          `${this.WANTED_WIN_W}x${this.WANTED_WIN_H} with xdotool windowsize`,
-        );
-        await new Promise<void>((resolve) => {
-          try {
-            const p = spawn(
-              'xdotool',
-              ['windowsize', String(id), String(this.WANTED_WIN_W), String(this.WANTED_WIN_H)],
-              { stdio: 'ignore' },
-            );
-            p.on('error', () => resolve());
-            p.on('close', () => resolve());
-            setTimeout(resolve, 3000);
-          } catch { resolve(); }
-        });
+    const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+    // Wait for the window to exist. A single early probe is what let Zen slip
+    // through at its own default 1200x720; poll for up to ~12s instead. A
+    // window that already exists (the Chromium family) resolves on the first
+    // probe, so this adds no latency in the common case.
+    let found: { id: string; X: number; Y: number; WIDTH: number; HEIGHT: number } | null = null;
+    for (let probe = 0; probe < 12 && !found; probe++) {
+      for (const cls of classes) {
+        found = await this.xdotoolWindowGeometry(cls);
+        if (found) break;
       }
-      // Moving to 0,0 as well: a window offset from the origin would leave a
-      // gap on two sides of the capture instead of one.
+      if (!found) await sleep(1000);
+    }
+    if (!found) {
+      console.warn(
+        `[Window] could not find a ${this.browserType} window to resize — ` +
+        `leaving geometry to measureChromeGeometry()`,
+      );
+      return;
+    }
+    const id = found.id;
+    let width = found.WIDTH;
+    let height = found.HEIGHT;
+
+    // Force + verify + retry. Without the re-read, a windowsize that openbox
+    // or the browser itself reverted went unnoticed -- exactly what happened
+    // to Zen, stuck at 1200x720 while the log claimed a resize was forced.
+    let forced = 0;
+    while ((width !== this.WANTED_WIN_W || height !== this.WANTED_WIN_H) && forced < 3) {
+      forced += 1;
+      console.log(
+        forced === 1
+          ? `[Window] ${this.browserType} opened ${width}x${height}, forcing ` +
+              `${this.WANTED_WIN_W}x${this.WANTED_WIN_H} with xdotool windowsize`
+          : `[Window] ${this.browserType} still ${width}x${height} after ` +
+              `windowsize — retrying (attempt ${forced}/3)`,
+      );
       await new Promise<void>((resolve) => {
         try {
-          const p = spawn('xdotool', ['windowmove', String(id), '0', '0'], { stdio: 'ignore' });
+          const p = spawn(
+            'xdotool',
+            ['windowsize', String(id), String(this.WANTED_WIN_W), String(this.WANTED_WIN_H)],
+            { stdio: 'ignore' },
+          );
           p.on('error', () => resolve());
           p.on('close', () => resolve());
           setTimeout(resolve, 3000);
         } catch { resolve(); }
       });
-      return;
+      const after = await this.xdotoolWindowIdGeometry(id);
+      if (after) {
+        width = after.WIDTH;
+        height = after.HEIGHT;
+      }
+      if (width !== this.WANTED_WIN_W || height !== this.WANTED_WIN_H) {
+        await sleep(750);
+      }
     }
-    console.warn(
-      `[Window] could not find a ${this.browserType} window to resize — ` +
-      `leaving geometry to measureChromeGeometry()`,
-    );
+
+    // Moving to 0,0 as well: a window offset from the origin would leave a
+    // gap on two sides of the capture instead of one.
+    await new Promise<void>((resolve) => {
+      try {
+        const p = spawn('xdotool', ['windowmove', String(id), '0', '0'], { stdio: 'ignore' });
+        p.on('error', () => resolve());
+        p.on('close', () => resolve());
+        setTimeout(resolve, 3000);
+      } catch { resolve(); }
+    });
+
+    if (forced === 0) {
+      console.log(`[Window] ${this.browserType} already ${width}x${height} — --window-size honoured`);
+    } else if (width === this.WANTED_WIN_W && height === this.WANTED_WIN_H) {
+      console.log(
+        `[Window] ${this.browserType} verified ${width}x${height} after ${forced} windowsize attempt(s)`,
+      );
+    } else {
+      console.warn(
+        `[Window] ${this.browserType} STILL ${width}x${height} after ${forced} ` +
+        `windowsize attempt(s) — geometry will reflect the real window; ` +
+        `chromeTop/clicks are computed against it`,
+      );
+    }
   }
 
   private async xdotoolWindowGeometry(cls: string): Promise<{ id: string; X: number; Y: number; WIDTH: number; HEIGHT: number } | null> {
@@ -1635,6 +1697,43 @@ export class BrowserSession {
           setTimeout(finish, 3000);
         });
         setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* done */ } resolve(null); }, 2000);
+      } catch {
+        resolve(null);
+      }
+    });
+  }
+
+  /**
+   * Read X/Y/WIDTH/HEIGHT for ONE specific window id (no class search).
+   *
+   * enforceWindowSize() needs this to verify that a `xdotool windowsize`
+   * actually stuck: re-running the class search would re-select the largest
+   * window by area, which could silently be a different window than the one
+   * that was just resized. Same --shell parsing as xdotoolWindowGeometry().
+   */
+  private async xdotoolWindowIdGeometry(id: string): Promise<{ X: number; Y: number; WIDTH: number; HEIGHT: number } | null> {
+    return new Promise((resolve) => {
+      try {
+        const g = spawn(
+          'xdotool',
+          ['getwindowgeometry', '--shell', id],
+          { stdio: ['ignore', 'pipe', 'ignore'] },
+        );
+        let out = '';
+        g.stdout?.on('data', (d: Buffer) => { out += d.toString(); });
+        g.on('error', () => resolve(null));
+        g.on('close', () => {
+          // Line parsing, not RegExp: see the escaping note in
+          // xdotoolWindowGeometry() -- `\d` inside a template literal collapses.
+          const parse = (k: string) => {
+            const line = out.split('\n').map(s => s.trim()).find(s => s.startsWith(`${k}=`));
+            return line ? parseInt(line.slice(k.length + 1).trim(), 10) : -1;
+          };
+          const X = parse('X'), Y = parse('Y'), W = parse('WIDTH'), H = parse('HEIGHT');
+          if (W < 0 || H < 0) { resolve(null); return; }
+          resolve({ X, Y, WIDTH: W, HEIGHT: H });
+        });
+        setTimeout(() => { try { g.kill('SIGKILL'); } catch { /* done */ } resolve(null); }, 2000);
       } catch {
         resolve(null);
       }
