@@ -77,6 +77,14 @@ const BROWSER_PATHS: Record<string, string[]> = {
     '/usr/bin/floorp',
     '/usr/lib/floorp/floorp',
   ],
+  midori: [
+    '/Applications/Midori.app/Contents/MacOS/midori',
+    // Official GitHub release .deb (Astian's apt repo, repo.astian.org, no
+    // longer resolves): unpacks the full Gecko tree under /opt/midori with
+    // /usr/bin/midori as a symlink -> /opt/midori/midori.
+    '/usr/bin/midori',
+    '/opt/midori/midori',
+  ],
   brave: [
     '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
     '/usr/bin/brave-browser',
@@ -228,6 +236,28 @@ export function getBrowserInfo(): BrowserInfo[] {
     displayName: 'Floorp',
     executablePath: floorpPath || '',
     available: !!floorpPath,
+  });
+
+  // ── Midori ────────────────────────────────────────────────────────────
+  // Gecko-based (Astian's Firefox fork), so isChromiumFamily() is false and it
+  // takes the identical WebDriver BiDi launch path as Firefox/LibreWolf/Zen/
+  // Floorp: no CDP flags, no CDP network events, Gecko-native -width/-height
+  // args, same chromeTop fallback. Documented limitation it inherits with that
+  // path: no about: navigation and a blank new tab (see browser-session.ts).
+  // NOT Electron/Chromium -- the Electron-era build was replaced by a
+  // Firefox-derived engine (verified: v11.9.1's package.json has zero Electron
+  // deps and builds with ./mach over an engine/ Firefox source tree). Install:
+  // Astian's documented apt repo (repo.astian.org) no longer resolves --
+  // NXDOMAIN from astian.org's authoritative nameserver -- so vps-restart.sh
+  // pins the official GitHub release .deb, which symlinks /usr/bin/midori ->
+  // /opt/midori/midori.
+  const midoriPath = findExecutable('midori') ||
+    BROWSER_PATHS.midori.find(p => existsSync(p)) || null;
+  browsers.push({
+    name: 'midori',
+    displayName: 'Midori',
+    executablePath: midoriPath || '',
+    available: !!midoriPath,
   });
 
   // Brave

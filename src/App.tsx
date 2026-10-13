@@ -33,6 +33,7 @@ const BROWSER_META: Record<string, { label: string }> = {
   librewolf: { label: 'LibreWolf' },
   zen: { label: 'Zen' },
   floorp: { label: 'Floorp' },
+  midori: { label: 'Midori' },
 };
 
 export default function App() {

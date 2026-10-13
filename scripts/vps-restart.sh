@@ -121,6 +121,37 @@ if ! command -v floorp >/dev/null 2>&1; then
     && apt-get install -y floorp >/dev/null 2>&1 || true
 fi
 
+# Midori is a Firefox-based (Gecko) browser from Astian. Its official apt
+# repository (repo.astian.org, documented in the upstream README) no longer
+# resolves -- NXDOMAIN from astian.org's authoritative nameserver as of
+# 2026-10-12 -- so installing it from a repo is impossible. The same version
+# ships as an official .deb on the project's GitHub releases
+# (goastian/midori-desktop). Verified for this pin: HTTP 200, 100,701,916
+# bytes, Depends only on libc6, zlib1g, fontconfig, procps and
+# pulseaudio|apulse|pipewire -- all present in Debian 13's base, no t64 naming
+# hazards. The package unpacks a self-contained Gecko tree to /opt/midori and
+# symlinks /usr/bin/midori -> /opt/midori/midori, the path BROWSER_PATHS.midori
+# resolves. dpkg -i then apt-get install -f -y settles dependencies. Guarded so
+# re-running is a no-op.
+if ! command -v midori >/dev/null 2>&1 && [ ! -x /opt/midori/midori ]; then
+  echo "  installing midori (official GitHub release .deb)..."
+  MIDORI_DEB=/tmp/midori.deb
+  if curl -fsSLo "$MIDORI_DEB" \
+      "https://github.com/goastian/midori-desktop/releases/download/v11.9.1/midori_11.9.1-0_amd64.deb"; then
+    # Same guard as the cloudflared block: a failed curl would leave an empty
+    # file and dpkg would then fail confusingly.
+    if [ -s "$MIDORI_DEB" ]; then
+      dpkg -i "$MIDORI_DEB" >/dev/null 2>&1 || true
+      DEBIAN_FRONTEND=noninteractive apt-get install -f -y >/dev/null 2>&1 || true
+    else
+      echo "  WARNING: midori download was empty — skipping"
+    fi
+  else
+    echo "  WARNING: could not download midori .deb — skipping"
+  fi
+  rm -f "$MIDORI_DEB"
+fi
+
 # Vivaldi publishes NO apt repository -- only a .deb per release. The URL is
 # version-less and always serves the current stable build (verified: HTTP 200,
 # no redirect), so it is re-fetched on every restart unless VIVALDI_SKIP is
