@@ -34,6 +34,7 @@ const BROWSER_META: Record<string, { label: string }> = {
   zen: { label: 'Zen' },
   floorp: { label: 'Floorp' },
   midori: { label: 'Midori' },
+  waterfox: { label: 'Waterfox' },
 };
 
 export default function App() {

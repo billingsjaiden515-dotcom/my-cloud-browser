@@ -85,6 +85,14 @@ const BROWSER_PATHS: Record<string, string[]> = {
     '/usr/bin/midori',
     '/opt/midori/midori',
   ],
+  waterfox: [
+    '/Applications/Waterfox.app/Contents/MacOS/waterfox',
+    // Official Debian 13 .deb linked from waterfox.com/download (built in
+    // Waterfox's own OBS repo): /usr/bin/waterfox wrapper ->
+    // /usr/lib/waterfox/waterfox inner binary.
+    '/usr/bin/waterfox',
+    '/usr/lib/waterfox/waterfox',
+  ],
   brave: [
     '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
     '/usr/bin/brave-browser',
@@ -258,6 +266,25 @@ export function getBrowserInfo(): BrowserInfo[] {
     displayName: 'Midori',
     executablePath: midoriPath || '',
     available: !!midoriPath,
+  });
+
+  // ── Waterfox ─────────────────────────────────────────────────────────
+  // Gecko-based (a Firefox fork), so isChromiumFamily() is false and it takes
+  // the identical WebDriver BiDi launch path as Firefox/LibreWolf/Zen/Floorp/
+  // Midori: no CDP flags, no CDP network events, Gecko-native -width/-height
+  // args, same chromeTop fallback, and the same automation limits (no about:
+  // navigation, blank new tab -- a known limitation, not a bug). Install: the
+  // official Debian 13 .deb linked from waterfox.com/download, built in
+  // Waterfox's own OBS repo (isv:/BrowserWorks); its declared t64 deps exist
+  // on Debian 13+. The package provides the /usr/bin/waterfox wrapper ->
+  // /usr/lib/waterfox/waterfox inner binary, both listed in BROWSER_PATHS.
+  const waterfoxPath = findExecutable('waterfox') ||
+    BROWSER_PATHS.waterfox.find(p => existsSync(p)) || null;
+  browsers.push({
+    name: 'waterfox',
+    displayName: 'Waterfox',
+    executablePath: waterfoxPath || '',
+    available: !!waterfoxPath,
   });
 
   // Brave

@@ -40,7 +40,7 @@
 
 set -u
 
-# `firefox`, `librewolf`, `zen`, `floorp`, `midori`, `brave`, `vivaldi`, `opera` and
+# `firefox`, `librewolf`, `zen`, `floorp`, `midori`, `waterfox`, `brave`, `vivaldi`, `opera` and
 # `edge` are matched alongside chromium so an orphaned browser from a dead server is reaped
 # too. Without them, a server crash during such a session leaks the whole
 # browser process tree (parent + content/GPU/utility processes), which is the
@@ -48,16 +48,16 @@ set -u
 # named binary, hence the tokens. Edge reuses the Chromium crashpad name and is
 # exempt via EXEMPT_RE. Helium is the same class of Chromium-based browser and
 # is added here for the same reason. LibreWolf's inner binary is `librewolf` and
-# Zen's is `zen`, Floorp's is `floorp` and Midori's is `midori`, each distinct
-# from `firefox`, hence their own tokens.
+# Zen's is `zen`, Floorp's is `floorp`, Midori's is `midori` and Waterfox's is
+# `waterfox`, each distinct from `firefox`, hence their own tokens.
 #
 # NOTE on tokens that are also substrings of their own install commands: like
 # `librewolf` and `helium`, `zen` also matches the tarball installer's own
-# `curl`/`tar` args, and `midori` matches the .deb filename in its own download
-# URL, all during vps-restart.sh. That only matters if the reaper fires
-# mid-install, and the idempotent `|| true` install guards simply retry on the
-# next restart, so it is a tolerated trade-off of this substring design.
-TARGET_RE="${CB_REAPER_TARGET_RE:-chromium|firefox|librewolf|zen|floorp|midori|brave|vivaldi|opera|edge|helium|ffmpeg|Xvfb}"
+# `curl`/`tar` args, and `midori`/`waterfox` match the .deb filenames in their
+# own download URLs, all during vps-restart.sh. That only matters if the reaper
+# fires mid-install, and the idempotent `|| true` install guards simply retry on
+# the next restart, so it is a tolerated trade-off of this substring design.
+TARGET_RE="${CB_REAPER_TARGET_RE:-chromium|firefox|librewolf|zen|floorp|midori|waterfox|brave|vivaldi|opera|edge|helium|ffmpeg|Xvfb}"
 NODE_RE="${CB_REAPER_NODE_RE:-node.*dist-server/server/main.js}"
 
 # Process names that are NEVER killed, in either kill path, even when they look
@@ -88,7 +88,7 @@ NODE_RE="${CB_REAPER_NODE_RE:-node.*dist-server/server/main.js}"
 # Both were checked rather than inferred, because a missing exemption lets the
 # reaper kill the crashpad of a HEALTHY live session.
 #
-# The Firefox-based browsers (Firefox, LibreWolf, Zen, Floorp, Midori) need NO entry
+# The Firefox-based browsers (Firefox, LibreWolf, Zen, Floorp, Midori, Waterfox) need NO entry
 # here. Their TARGET_RE tokens match the whole process tree, but Gecko has no
 # Chromium-style crashpad sidecar that detaches and reparents to init during a
 # HEALTHY live session -- Firefox's crashreporter runs only AFTER a crash to

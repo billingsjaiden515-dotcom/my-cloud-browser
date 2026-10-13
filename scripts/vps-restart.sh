@@ -152,6 +152,35 @@ if ! command -v midori >/dev/null 2>&1 && [ ! -x /opt/midori/midori ]; then
   rm -f "$MIDORI_DEB"
 fi
 
+# Waterfox is a Firefox-based (Gecko) browser from BrowserWorks. It publishes
+# official Linux builds linked from waterfox.com/download: a cdn tarball AND a
+# Debian 13 .deb built in the project's own OBS repo (isv:/BrowserWorks). The
+# .deb is chosen here (verified: HTTP 200, 102,601,204 bytes, pinned 6.7.5-0):
+# its directory name is Debian_13 by construction and its declared deps are the
+# t64 library suite that Debian 13 ships (libasound2t64, libgtk-3-0t64, ...), so
+# they resolve with apt -- no manual symlink step either. It installs the Gecko
+# tree under /usr/lib/waterfox with /usr/bin/waterfox as the wrapper, the exact
+# path BROWSER_PATHS.waterfox resolves. dpkg -i then apt-get install -f -y
+# settles dependencies. Guarded so re-running is a no-op.
+if ! command -v waterfox >/dev/null 2>&1; then
+  echo "  installing waterfox (official Debian 13 .deb)..."
+  WATERFOX_DEB=/tmp/waterfox.deb
+  if curl -fsSLo "$WATERFOX_DEB" \
+      "https://download.opensuse.org/repositories/isv:/BrowserWorks/Debian_13/amd64/waterfox_6.7.5-0_amd64.deb"; then
+    # Same guard as the midori/cloudflared blocks: a failed curl would leave an
+    # empty file and dpkg would then fail confusingly.
+    if [ -s "$WATERFOX_DEB" ]; then
+      dpkg -i "$WATERFOX_DEB" >/dev/null 2>&1 || true
+      DEBIAN_FRONTEND=noninteractive apt-get install -f -y >/dev/null 2>&1 || true
+    else
+      echo "  WARNING: waterfox download was empty — skipping"
+    fi
+  else
+    echo "  WARNING: could not download waterfox .deb — skipping"
+  fi
+  rm -f "$WATERFOX_DEB"
+fi
+
 # Vivaldi publishes NO apt repository -- only a .deb per release. The URL is
 # version-less and always serves the current stable build (verified: HTTP 200,
 # no redirect), so it is re-fetched on every restart unless VIVALDI_SKIP is
