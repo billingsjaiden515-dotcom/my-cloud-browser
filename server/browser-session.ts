@@ -123,7 +123,7 @@ const CHROME_TOP_FALLBACK: Record<string, number> = {
   librewolf: 88,   // same Gecko chrome/tab-bar as Firefox (LibreWolf is a Firefox fork)
   zen: 88,         // estimate: Gecko chrome (Zen has a different sidebar UI); confirm via geometry log
   floorp: 88,      // estimate: Gecko chrome/tab-bar (Floorp is a Firefox fork); confirm via geometry log
-  midori: 88,      // estimate: Gecko chrome/tab-bar (Midori is a Firefox fork); confirm via geometry log
+  midori: 133,     // exact for this deployment: measured on VPS 2026-10-12 (page-side MATCH); the 22px sidebar is accounted via chromeLeft
   opera: 78,       // estimate: Blink-based, same family as Brave/Vivaldi
 };
 
@@ -140,10 +140,10 @@ const WINDOW_CLASSES: Record<string, string[]> = {
   zen: ['zen', 'Zen', 'Navigator'],
   // Floorp is Gecko: binary name `floorp`, historic Gecko res_class `Navigator`.
   floorp: ['floorp', 'Floorp', 'Navigator'],
-  // Midori is Gecko: binary name `midori`, historic Gecko res_class `Navigator`.
-  // NOT verified on the VPS; the [Geometry] log prints every class tried, so the
-  // real one is confirmed on first run rather than assumed.
-  midori: ['midori', 'Midori', 'Navigator'],
+  // Midori is Gecko. Verified on the VPS 2026-10-12: res_class is `midori`
+  // (the capitalised and Navigator spellings never matched), so the list is
+  // trimmed to the one confirmed class.
+  midori: ['midori'],
   brave: ['brave-browser', 'brave'],
   // Vivaldi sets WM_CLASS from its binary name. Debian installs it as
   // `vivaldi-stable`, and the class can be capitalised depending on the build,
