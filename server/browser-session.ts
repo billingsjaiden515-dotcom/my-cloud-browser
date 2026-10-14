@@ -379,6 +379,27 @@ export class BrowserSession {
           'browser.startup.homepage_override.mstone': 'ignore',
           'datareporting.policy.dataSubmissionEnabled': false,
           'toolkit.telemetry.enabled': false,
+          // Zen ONLY: suppress its first-run "Welcome" wizard. Verified from
+          // the SHIPPED release tarball (zen.linux-x86_64.tar.xz ->
+          // browser/omni.ja), not guessed:
+          //   * ZenStartup.mjs #checkForWelcomePage() loads ZenWelcome.mjs
+          //     only while `zen.welcome-screen.seen` is false.
+          //   * The shipped defaults (defaults/preferences/firefox.js, from
+          //     zen.js) set that pref to false and ALREADY set Firefox's own
+          //     `browser.aboutwelcome.enabled` to false -- so about:welcome
+          //     needs no pref here, the Zen gate is the only one.
+          //   * ZenWelcome.mjs, once loaded, does resizeTo(1200,720) AND
+          //     lockWindowSize() (min/max width+height) on the MAIN window --
+          //     the exact source of the 1200x720 geometry that the xdotool
+          //     enforcement in enforceWindowSize() has to fight.
+          // Puppeteer creates a fresh mkdtemp profile on every launch (see
+          // FirefoxLauncher.defaultArgs -> createProfile), so the wizard would
+          // otherwise run in EVERY session and clicking it through once could
+          // not persist. Injecting the pref here writes it into the temp
+          // profile's user.js before Zen starts, every time.
+          ...(this.browserType === 'zen'
+            ? { 'zen.welcome-screen.seen': true }
+            : {}),
         },
       });
     } else {
@@ -1615,6 +1636,32 @@ export class BrowserSession {
         `windowsize attempt(s) — geometry will reflect the real window; ` +
         `chromeTop/clicks are computed against it`,
       );
+    }
+
+    // Zen only: force X11 input focus onto the window just sized. VPS-observed
+    // 2026-10-13: `xdotool getwindowfocus` returned "No window has focus", so
+    // `xdotool keys` went nowhere and mouse events could be dispatched against
+    // the wrong window. `windowactivate --sync` asks the window manager
+    // started by scripts/vps-restart.sh (xfwm4) to raise and focus it;
+    // `windowfocus --sync` then sets the X input focus directly as a second
+    // layer in case the WM ignored the activation. Uses the same window id as
+    // everything above, so it can only ever target the window that
+    // measureChromeGeometry() will read.
+    if (this.browserType === 'zen') {
+      for (const xargs of [
+        ['windowactivate', '--sync', id],
+        ['windowfocus', '--sync', id],
+      ]) {
+        await new Promise<void>((resolve) => {
+          try {
+            const p = spawn('xdotool', xargs, { stdio: 'ignore' });
+            p.on('error', () => resolve());
+            p.on('close', () => resolve());
+            setTimeout(resolve, 3000);
+          } catch { resolve(); }
+        });
+      }
+      console.log(`[Window] zen: forced X11 activation+focus on window ${id}`);
     }
   }
 
