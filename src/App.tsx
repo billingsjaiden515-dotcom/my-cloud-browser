@@ -15,6 +15,13 @@ const THEMES: { value: Theme; label: string; icon: string }[] = [
   { value: 'midnight', label: 'Midnight', icon: '🌌' },
   { value: 'ocean',  label: 'Ocean',  icon: '🌊' },
   { value: 'forest', label: 'Forest', icon: '🌲' },
+  { value: 'navy', label: 'Navy', icon: '⚓' },
+  { value: 'sage', label: 'Sage', icon: '🌿' },
+  { value: 'cherry', label: 'Cherry', icon: '🍒' },
+  { value: 'rose', label: 'Rose', icon: '🌹' },
+  { value: 'amber', label: 'Amber', icon: '🔥' },
+  { value: 'indigo', label: 'Indigo', icon: '🔮' },
+  { value: 'mono', label: 'Mono', icon: '🌗' },
 ];
 
 /**

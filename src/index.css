@@ -63,6 +63,94 @@
   --muted: #6b7280;
 }
 
+/* Deep navy, muted (non-cyan) blue accent — ocean's deeper sibling. */
+.theme-navy {
+  --bg: #0a0f1e;
+  --surface: #111830;
+  --surface-2: #17203d;
+  --border: #26325a;
+  --primary: #4f74c8;
+  --primary-hover: #6b8ed6;
+  --text: #dbe4f5;
+  --muted: #6b7280;
+}
+
+/* Muted green-gray surfaces, soft (non-neon) green accent. */
+.theme-sage {
+  --bg: #12160f;
+  --surface: #1a1e16;
+  --surface-2: #23281f;
+  --border: #394033;
+  --primary: #8fbf7f;
+  --primary-hover: #a5d194;
+  --text: #e3ecdd;
+  --muted: #6b7280;
+}
+
+/* Red-black surfaces, bright red accent. */
+.theme-cherry {
+  --bg: #160a0a;
+  --surface: #1f1010;
+  --surface-2: #2a1515;
+  --border: #4a2222;
+  --primary: #ef4444;
+  --primary-hover: #f87171;
+  --text: #f6e0e0;
+  --muted: #6b7280;
+}
+
+/* Dark rose surfaces, pink accent. */
+.theme-rose {
+  --bg: #170d12;
+  --surface: #20121a;
+  --surface-2: #2b1823;
+  --border: #4a2437;
+  --primary: #ec4899;
+  --primary-hover: #f472b6;
+  --text: #fbe4ee;
+  --muted: #6b7280;
+}
+
+/* Dark brown surfaces, orange accent. */
+.theme-amber {
+  --bg: #150f08;
+  --surface: #1e160c;
+  --surface-2: #291e11;
+  --border: #4a3418;
+  --primary: #f97316;
+  --primary-hover: #fb923c;
+  --text: #f7e7d3;
+  --muted: #6b7280;
+}
+
+/* Dark purple surfaces, violet accent (distinct from midnight's near-black). */
+.theme-indigo {
+  --bg: #120a1c;
+  --surface: #1a1129;
+  --surface-2: #241838;
+  --border: #3b2a5c;
+  --primary: #8b5cf6;
+  --primary-hover: #a78bfa;
+  --text: #e9e1fb;
+  --muted: #6b7280;
+}
+
+/* Pure black surfaces, silver-white accent. --primary is capped at #666666 /
+   #767676 so the hardcoded white text/icons on var(--primary) (picker active
+   row, CTA button, logo tile) keep >=4.5:1 -- literal #fff would render them
+   white-on-white. A dimmer accent is also the usual monochrome choice: pure
+   white on black halates. */
+.theme-mono {
+  --bg: #000000;
+  --surface: #0d0d0d;
+  --surface-2: #171717;
+  --border: #2e2e2e;
+  --primary: #666666;
+  --primary-hover: #767676;
+  --text: #f2f2f2;
+  --muted: #8a8a8a;
+}
+
 /* ─── Base ────────────────────────────────────────────────────────────────────── */
 * { box-sizing: border-box; }
 

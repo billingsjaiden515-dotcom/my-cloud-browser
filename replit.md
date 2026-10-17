@@ -33,7 +33,7 @@ This starts:
 | `src/App.tsx` | Main UI (toolbar, tabs, themes, immersive mode) |
 | `src/hooks/useRemoteBrowser.ts` | WebRTC + signaling + session management hook |
 | `src/components/BrowserViewport.tsx` | Video element + input capture |
-| `src/contexts/ThemeContext.tsx` | 6-theme system |
+| `src/contexts/ThemeContext.tsx` | 13-theme system |
 
 ## Environment
 
@@ -46,4 +46,4 @@ This starts:
 - No supabase dependency (removed — was unused)
 - No artificial frame rate caps
 - All browser logos use official SVG designs (public/icons/)
-- Themes: system, light, dark, midnight, ocean, forest
+- Themes: system, light, dark, midnight, ocean, forest, navy, sage, cherry, rose, amber, indigo, mono
