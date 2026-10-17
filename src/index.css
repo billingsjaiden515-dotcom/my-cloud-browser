@@ -151,18 +151,19 @@
   --muted: #8a8a8a;
 }
 
-/* Muted gold/olive surfaces, rich gold accent — completes the spectrum.
-   Olive-black bg keeps it distinct from amber's warm brown; gold primary is
-   yellow-hued (hue ~50°) vs amber's orange (hue ~25°). */
+/* Metallic gold — refined from the flat highlighter-yellow first pass
+   (#eab308) to classic jewelry gold (#d4af37): deeper, desaturated, warm.
+   Surfaces carry a warm olive (not greenish) tint; still distinct from
+   amber (hue ~46° vs amber's ~25°, olive-warm vs brown-orange bg). */
 .theme-gold {
-  --bg: #14140a;
-  --surface: #1c1c10;
-  --surface-2: #262618;
-  --border: #3f3f1f;
-  --primary: #eab308;
-  --primary-hover: #facc15;
-  --text: #fefce8;
-  --muted: #78786b;
+  --bg: #14110b;              /* Warmer, deeper olive-black (not greenish) */
+  --surface: #1c1810;
+  --surface-2: #262115;
+  --border: #3d3321;
+  --primary: #d4af37;         /* Classic metallic gold */
+  --primary-hover: #e5c158;   /* Lighter gold on hover */
+  --text: #fdf8e4;            /* Warm ivory/cream */
+  --muted: #8c826d;           /* Warm gray */
 }
 
 /* ─── Base ────────────────────────────────────────────────────────────────────── */
