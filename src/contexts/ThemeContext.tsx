@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 
 export type Theme =
   | 'system' | 'light' | 'dark' | 'midnight' | 'ocean' | 'forest'
-  | 'navy' | 'sage' | 'cherry' | 'rose' | 'amber' | 'indigo' | 'mono';
+  | 'navy' | 'sage' | 'cherry' | 'rose' | 'amber' | 'indigo' | 'mono' | 'gold';
 
 interface ThemeContextValue {
   theme: Theme;

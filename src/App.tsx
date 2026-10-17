@@ -22,6 +22,7 @@ const THEMES: { value: Theme; label: string; icon: string }[] = [
   { value: 'amber', label: 'Amber', icon: '🔥' },
   { value: 'indigo', label: 'Indigo', icon: '🔮' },
   { value: 'mono', label: 'Mono', icon: '🌗' },
+  { value: 'gold', label: 'Gold', icon: '💰' },
 ];
 
 /**
