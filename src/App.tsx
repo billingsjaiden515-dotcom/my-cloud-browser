@@ -52,6 +52,50 @@ const AUDIO_BITRATE: Record<'low' | 'medium' | 'high', number> = {
   high: 128000,
 };
 
+// Tab Cloaking presets: clickable tiles that pre-fill the Title / Favicon inputs.
+const CLOAK_PRESETS: { label: string; title: string; favicon: string }[] = [
+  {
+    label: 'YouTube',
+    title: 'YouTube',
+    favicon: 'https://www.youtube.com/s/desktop/5d669aa8/img/favicon_48x48.png',
+  },
+  {
+    label: 'Google Drive',
+    title: 'My Drive - Google Drive',
+    favicon: 'https://drive.google.com/favicon.ico',
+  },
+  {
+    label: 'Canvas (DSISD)',
+    title: 'Dashboard',
+    favicon: 'https://dsisd.instructure.com/favicon.ico',
+  },
+  {
+    label: 'Canvas (Alt)',
+    title: 'Dashboard',
+    favicon: 'https://favicon.run/favicon?domain=dsisd.instructure.com&sz=48',
+  },
+  {
+    label: 'Skyward',
+    title: 'Skyward',
+    favicon: 'https://skyweb.dsisdtx.us/favicon.ico',
+  },
+  {
+    label: 'Gmail',
+    title: 'Inbox - Gmail',
+    favicon: 'https://ssl.gstatic.com/ui/v1/icons/mail/rfr/gmail.ico',
+  },
+  {
+    label: 'iCEV',
+    title: 'iCEV',
+    favicon: 'https://a.favicon.im/login.icevonline.com',
+  },
+  {
+    label: 'How The Market Works',
+    title: 'How The Market Works',
+    favicon: 'https://www.howthemarketworks.com/wp-content/uploads/2016/12/cropped-touch-icon-ipad-retina-32x32.png',
+  },
+];
+
 export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const api = useRemoteBrowser(videoRef);
@@ -79,7 +123,42 @@ export default function App() {
     setAudioSettings({ volume: 100, bass: 0, treble: 0, quality: 'high' });
   }, []);
 
-  const [settingsTab, setSettingsTab] = useState<'appearance' | 'audio'>('appearance');
+  // ─── Tab Cloaking state (persisted to localStorage) ──────────────────────
+  const loadCloakState = <T,>(key: string, fallback: T): T => {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw !== null ? (JSON.parse(raw) as T) : fallback;
+    } catch {
+      return fallback;
+    }
+  };
+  const saveCloakState = (key: string, value: unknown) => {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch {
+      // localStorage unavailable or quota exceeded — silently ignore.
+    }
+  };
+
+  const [customTitle, setCustomTitle] = useState<string>(() =>
+    loadCloakState('cloak_customTitle', '')
+  );
+  const [customFavicon, setCustomFavicon] = useState<string>(() =>
+    loadCloakState('cloak_customFavicon', '')
+  );
+  const [autoCloakEnabled, setAutoCloakEnabled] = useState<boolean>(() =>
+    loadCloakState('cloak_autoCloakEnabled', false)
+  );
+  const [launchMethod, setLaunchMethod] = useState<'about:blank' | 'blob:'>(
+    () => loadCloakState('cloak_launchMethod', 'about:blank')
+  );
+
+  useEffect(() => { saveCloakState('cloak_customTitle', customTitle); }, [customTitle]);
+  useEffect(() => { saveCloakState('cloak_customFavicon', customFavicon); }, [customFavicon]);
+  useEffect(() => { saveCloakState('cloak_autoCloakEnabled', autoCloakEnabled); }, [autoCloakEnabled]);
+  useEffect(() => { saveCloakState('cloak_launchMethod', launchMethod); }, [launchMethod]);
+
+  const [settingsTab, setSettingsTab] = useState<'appearance' | 'audio' | 'cloaking'>('appearance');
 
   const [selectedBrowser, setSelectedBrowser] = useState('chromium');
   // Which browser the CURRENT session actually launched. Tracked separately
@@ -155,6 +234,31 @@ export default function App() {
   }, [activeBrowser, isConnected]);
 
   useEffect(() => {
+    // Tab Cloak overrides: custom title/favicon take precedence over the
+    // default browser auto-logic. When both are empty, fall back to default.
+    if (customTitle || customFavicon) {
+      let link = document.querySelector<HTMLLinkElement>('link[rel~="icon"]');
+      if (!link) {
+        link = document.createElement('link');
+        link.rel = 'icon';
+        document.head.appendChild(link);
+      }
+      document.title = customTitle || 'Cloud Browser';
+      if (customFavicon) {
+        link.type = 'image/png';
+        link.href = customFavicon;
+      } else {
+        // Only the title was overridden; restore the default favicon.
+        const name = BROWSER_META[activeBrowser] ? activeBrowser : 'chromium';
+        const faviconUrl = (name === 'vivaldi' || name === 'opera')
+          ? `/icons/${name}.png`
+          : `/favicon-${name}.svg`;
+        link.type = 'image/png';
+        link.href = `${faviconUrl}?v=${faviconVersion}`;
+      }
+      return;
+    }
+
     const name = BROWSER_META[activeBrowser] ? activeBrowser : 'chromium';
     const meta = BROWSER_META[name];
 
@@ -176,7 +280,7 @@ export default function App() {
       : `/favicon-${name}.svg`;
     link.href = `${faviconUrl}?v=${faviconVersion}`;
     document.title = isConnected ? `Cloud Browser (${meta.label})` : 'Cloud Browser';
-  }, [name, faviconVersion, isConnected]);
+  }, [customTitle, customFavicon, activeBrowser, faviconVersion, isConnected]);
 
   // Escape key to exit immersive
   useEffect(() => {
@@ -209,7 +313,76 @@ export default function App() {
     }
   }, []);
 
+  // ─── Tab Cloak: preset application + reset ───────────────────────────────
+  const applyPreset = useCallback((p: { label: string; title: string; favicon: string }) => {
+    setCustomTitle(p.title);
+    setCustomFavicon(p.favicon);
+  }, []);
+
+  const resetCloak = useCallback(() => {
+    setCustomTitle('');
+    setCustomFavicon('');
+  }, []);
+
+  // ─── Tab Cloak: launch a cloaked tab ─────────────────────────────────────
+  const launchCloak = useCallback(() => {
+    let w;
+    if (launchMethod === 'blob:') {
+      const html = `<!DOCTYPE html><html><head><title>${customTitle || 'Cloud Browser'}</title></head><body></body></html>`;
+      const blob = new Blob([html], { type: 'text/html' });
+      const blobUrl = URL.createObjectURL(blob);
+      w = window.open(blobUrl, '_blank');
+    } else {
+      w = window.open('about:blank', '_blank');
+    }
+
+    if (!w || w.closed) {
+      console.warn('[Cloak] Popup blocked or window closed');
+      return;
+    }
+
+    const applyCloak = () => {
+      try {
+        const doc = w.document;
+        const iframe = doc.createElement('iframe');
+        iframe.src = window.location.origin; // Loads the app itself
+        iframe.style.cssText =
+          'position:fixed; top:0; left:0; width:100%; height:100%; border:none;';
+        iframe.allow =
+          'microphone; camera; autoplay; clipboard-read; clipboard-write';
+        doc.body.appendChild(iframe);
+
+        // Update the new window's title and favicon.
+        doc.title = customTitle || 'Cloud Browser';
+        let cloakLink = doc.querySelector<HTMLLinkElement>('link[rel~="icon"]');
+        if (!cloakLink) {
+          cloakLink = doc.createElement('link');
+          cloakLink.rel = 'icon';
+          doc.head.appendChild(cloakLink);
+        }
+        if (customFavicon) {
+          cloakLink.type = 'image/png';
+          cloakLink.href = customFavicon;
+        }
+      } catch (e) {
+        console.warn('[Cloak] Failed to write iframe:', e);
+      }
+    };
+
+    // about:blank is ready immediately; blob: may still be loading.
+    if (w.document.readyState === 'complete') {
+      applyCloak();
+    } else {
+      w.addEventListener('load', applyCloak, { once: true });
+    }
+  }, [launchMethod, customTitle, customFavicon]);
+
   const handleStart = useCallback(async () => {
+    // Auto-Cloak: launch a cloaked tab instead of starting the stream here.
+    if (autoCloakEnabled) {
+      launchCloak();
+      return;
+    }
     setUrlInput('');
     // Record the browser BEFORE awaiting, so the favicon flips the instant the
     // user commits to it. If start() fails the session never reaches
@@ -217,7 +390,7 @@ export default function App() {
     // favicon is correct again without an explicit rollback.
     setRunningBrowser(selectedBrowser);
     await api.start(selectedBrowser);
-  }, [api, selectedBrowser]);
+  }, [api, selectedBrowser, autoCloakEnabled, launchCloak]);
 
   const handleStop = useCallback(async () => {
     await api.stop();
@@ -463,6 +636,13 @@ export default function App() {
             >
               <Volume2 className="w-3 h-3 mr-1" /> Audio
             </button>
+            <button
+              onClick={() => setSettingsTab('cloaking')}
+              className={`flex-1 px-2 py-1.5 text-xs rounded-lg border transition-colors ${settingsTab === 'cloaking' ? 'bg-primary border-primary' : 'border-transparent text-muted hover:bg-surface-2'}`}
+              style={{ color: settingsTab === 'cloaking' ? 'var(--primary-text)' : 'var(--muted)' }}
+            >
+              <Globe className="w-3 h-3 mr-1" /> Cloaking
+            </button>
           </div>
           <div className="space-y-1" style={{ display: settingsTab === 'appearance' ? 'block' : 'none' }}>
             {THEMES.map(t => (
@@ -564,8 +744,138 @@ export default function App() {
               <SlidersHorizontal className="w-3 h-3 mr-2" /> Reset to Defaults
             </button>
           </div>
+        {/* ─── Tab Cloaking panel ─── */}
+        <div
+          className="space-y-3"
+          style={{ display: settingsTab === 'cloaking' ? 'block' : 'none' }}
+        >
+          {/* Preset grid */}
+          <div>
+            <div className="text-xs mb-1" style={{ color: 'var(--muted)' }}>
+              Presets
+            </div>
+            <div className="grid grid-cols-4 gap-1 mb-3">
+              {CLOAK_PRESETS.map(p => (
+                <button
+                  key={p.label}
+                  onClick={() => applyPreset(p)}
+                  title={p.label}
+                  className="flex flex-col items-center gap-1 px-1 py-2 rounded-lg border transition-colors cursor-pointer"
+                  style={{
+                    borderColor: 'var(--border)',
+                    background: 'var(--surface-2)',
+                    color: 'var(--text)',
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.background = 'var(--surface)';
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.background = 'var(--surface-2)';
+                  }}
+                >
+                  <img
+                    src={p.favicon}
+                    alt=""
+                    className="w-6 h-6 rounded object-cover"
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none';
+                    }}
+                  />
+                  <span className="text-[10px] leading-none truncate" style={{ color: 'var(--muted)' }}>
+                    {p.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Custom Tab Title input */}
+          <div>
+            <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
+              <span>Custom Tab Title</span>
+            </div>
+            <input
+              type="text"
+              value={customTitle}
+              onChange={e => setCustomTitle(e.target.value)}
+              placeholder="Cloud Browser"
+              className="w-full bg-surface-2 border rounded-lg text-xs outline-none"
+              style={{ borderColor: 'var(--border)', color: 'var(--text)', borderRadius: '0.5rem' }}
+            />
+          </div>
+
+          {/* Custom Favicon URL input */}
+          <div>
+            <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
+              <span>Custom Favicon URL</span>
+            </div>
+            <input
+              type="text"
+              value={customFavicon}
+              onChange={e => setCustomFavicon(e.target.value)}
+              placeholder="https://example.com/favicon.ico"
+              className="w-full bg-surface-2 border rounded-lg text-xs outline-none"
+              style={{ borderColor: 'var(--border)', color: 'var(--text)', borderRadius: '0.5rem' }}
+            />
+          </div>
+
+          {/* Reset overrides */}
+          <button
+            onClick={resetCloak}
+            className="w-full px-3 py-1.5 text-xs border rounded-lg transition-colors cursor-pointer text-red-400"
+            style={{ borderColor: 'var(--border)', borderRadius: '0.5rem' }}
+          >
+            <X className="w-3 h-3 mr-2" /> Reset overrides
+          </button>
+
+          <div className="pt-1 border-t" style={{ borderColor: 'var(--border)' }}>
+            <div className="flex justify-between text-xs mb-2" style={{ color: 'var(--muted)' }}>
+              <span>Auto-Cloak</span>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={autoCloakEnabled}
+                  onChange={e => setAutoCloakEnabled(e.target.checked)}
+                  className="accent-primary"
+                />
+                <span>On / Off</span>
+              </label>
+            </div>
+            <div>
+              <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
+                <span>Launch Method</span>
+              </div>
+              <select
+                value={launchMethod}
+                onChange={e => setLaunchMethod(e.target.value as 'about:blank' | 'blob:')}
+                className="w-full bg-surface-2 border rounded-lg text-xs cursor-pointer"
+                style={{ borderColor: 'var(--border)', color: 'var(--text)', borderRadius: '0.5rem' }}
+              >
+                <option value="about:blank">about:blank</option>
+                <option value="blob:">blob:</option>
+              </select>
+            </div>
+            <button
+              onClick={launchCloak}
+              className="w-full px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors"
+              style={{
+                background: 'var(--primary)',
+                color: 'var(--primary-text)',
+                borderRadius: '0.5rem',
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.background = 'var(--primary-hover)';
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = 'var(--primary)';
+              }}
+            >
+              Launch Cloaked Tab
+            </button>
+          </div>
         </div>
-      )}
+      </div>
+    )}
 
       {/* ─── Viewport ─────────────────────────────────────────────────────────── */}
       <div
