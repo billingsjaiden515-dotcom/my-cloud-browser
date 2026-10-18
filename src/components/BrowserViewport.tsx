@@ -75,6 +75,9 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
     bass.connect(treble);
     treble.connect(gain);
     gain.connect(ctx.destination);
+    // Max out the video element's own volume so the Web Audio gain node
+    // performs the actual boost/EQ rather than being capped by the element.
+    videoEl.volume = 1.0;
     audioCtxRef.current = ctx;
     bassRef.current = bass;
     trebleRef.current = treble;
@@ -96,6 +99,27 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
     if (bassRef.current) bassRef.current.gain.value = bass;
     if (trebleRef.current) trebleRef.current.gain.value = treble;
   }, [volume, bass, treble]);
+
+  // Resume a suspended AudioContext via a direct user gesture on the video.
+  // Browsers block AudioContext until the user interacts; the connect-effect
+  // resume runs outside a gesture and may be rejected, so clicking the video
+  // provides a valid gesture to unblock playback and make EQ/volume audible.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const resumeIfSuspended = async () => {
+      const ctx = audioCtxRef.current;
+      if (ctx && ctx.state === 'suspended') {
+        try {
+          await ctx.resume();
+        } catch {
+          // Resume may still be blocked; retry on next gesture.
+        }
+      }
+    };
+    video.addEventListener('click', resumeIfSuspended);
+    return () => video.removeEventListener('click', resumeIfSuspended);
+  }, [videoRef]);
 
   // Sizing: the video FILLS its container 100%x100% with object-fit 'cover'
   // (top-left anchored). Rationale: an aspect-preserving "fit" box can never
