@@ -151,19 +151,19 @@
   --muted: #8a8a8a;
 }
 
-/* Metallic gold — refined from the flat highlighter-yellow first pass
-   (#eab308) to classic jewelry gold (#d4af37): deeper, desaturated, warm.
-   Surfaces carry a warm olive (not greenish) tint; still distinct from
-   amber (hue ~46° vs amber's ~25°, olive-warm vs brown-orange bg). */
+/* Bright, clean yellow-gold — third pass: v1 (#eab308) read as highlighter,
+   v2 (#d4af37) as muddy brass on the dark bg; this keeps warm-black surfaces
+   and uses a yellow-400-class accent (#facc15) so the gold pops energetic
+   instead of mustard. Still distinct from amber (yellow ~47° vs orange ~25°). */
 .theme-gold {
-  --bg: #14110b;              /* Warmer, deeper olive-black (not greenish) */
-  --surface: #1c1810;
-  --surface-2: #262115;
-  --border: #3d3321;
-  --primary: #d4af37;         /* Classic metallic gold */
-  --primary-hover: #e5c158;   /* Lighter gold on hover */
-  --text: #fdf8e4;            /* Warm ivory/cream */
-  --muted: #8c826d;           /* Warm gray */
+  --bg: #12100a;              /* Deep warm black */
+  --surface: #1c1910;
+  --surface-2: #262215;
+  --border: #3d3621;
+  --primary: #facc15;         /* Bright, vibrant gold */
+  --primary-hover: #fde047;   /* Lighter pop on hover */
+  --text: #fefce8;            /* Warm cream-white */
+  --muted: #a1977d;           /* Brighter warm gray for readability */
 }
 
 /* ─── Base ────────────────────────────────────────────────────────────────────── */
