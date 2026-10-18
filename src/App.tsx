@@ -421,17 +421,16 @@ export default function App() {
     await api.start(selectedBrowser);
   }, [api, selectedBrowser, autoCloakEnabled, launchCloak, cloakTargetUrl]);
 
-  // Auto-cloak on page load: if Auto-Cloak is enabled, launch a cloaked tab
-  // and immediately redirect the current tab to the cloak target URL.
+  // Auto-cloak on page load: if Auto-Cloak is enabled, launch a cloaked tab.
+  // The main UI tab stays on the current URL; only the new cloaked tab opens.
   // Uses a ref so it only fires once on mount, not on every re-render.
   const autoCloakMounted = useRef(false);
   useEffect(() => {
     if (autoCloakEnabled && !autoCloakMounted.current) {
       autoCloakMounted.current = true;
       launchCloak();
-      window.location.href = cloakTargetUrl;
     }
-  }, [autoCloakEnabled, launchCloak, cloakTargetUrl]);
+  }, [autoCloakEnabled, launchCloak]);
 
   const handleStop = useCallback(async () => {
     await api.stop();
