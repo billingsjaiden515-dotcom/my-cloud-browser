@@ -97,7 +97,7 @@ const CLOAK_PRESETS: { label: string; title: string; favicon: string }[] = [
   {
     label: 'New Tab',
     title: 'New Tab',
-    favicon: 'https://www.google.com/favicon.ico',
+    favicon: 'https://ssl.gstatic.com/gb/images/sprites/p_1x_dark.png',
   },
   {
     label: 'Google',
