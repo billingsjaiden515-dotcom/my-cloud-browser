@@ -260,9 +260,13 @@ export default function App() {
       } else {
         // Only the title was overridden; restore the default favicon.
         const name = BROWSER_META[activeBrowser] ? activeBrowser : 'chromium';
-        const faviconUrl = (name === 'vivaldi' || name === 'opera')
-          ? `/icons/${name}.png`
-          : `/favicon-${name}.svg`;
+        // Edge uses a favicon.run URL; Vivaldi and Opera ship PNG icons directly;
+        // all others use SVG wrappers from public/favicon-<name>.svg.
+        const faviconUrl = name === 'edge'
+          ? 'https://favicon.run/favicon?domain=explore.microsoft.com&sz=32'
+          : (name === 'vivaldi' || name === 'opera')
+            ? `/icons/${name}.png`
+            : `/favicon-${name}.svg`;
         link.type = 'image/png';
         link.href = `${faviconUrl}?v=${faviconVersion}`;
       }
@@ -282,12 +286,13 @@ export default function App() {
       document.head.appendChild(link);
     }
     link.type = 'image/png';
-    // Vivaldi and Opera use their PNG icons from public/icons/ directly, so the
-    // tab and the dropdown can't drift. Chromium, Firefox and Brave keep their
-    // SVG favicon wrappers (which encode the full colour + transparency).
-    const faviconUrl = (name === 'vivaldi' || name === 'opera')
-      ? `/icons/${name}.png`
-      : `/favicon-${name}.svg`;
+    // Edge uses a favicon.run URL; Vivaldi and Opera ship PNG icons directly;
+    // all others use SVG wrappers from public/favicon-<name>.svg.
+    const faviconUrl = name === 'edge'
+      ? 'https://favicon.run/favicon?domain=explore.microsoft.com&sz=32'
+      : (name === 'vivaldi' || name === 'opera')
+        ? `/icons/${name}.png`
+        : `/favicon-${name}.svg`;
     link.href = `${faviconUrl}?v=${faviconVersion}`;
     document.title = isConnected ? `Cloud Browser (${meta.label})` : 'Cloud Browser';
   }, [customTitle, customFavicon, activeBrowser, faviconVersion, isConnected]);
@@ -422,12 +427,13 @@ export default function App() {
 
   // Browser logo component - supports SVG and PNG icons
   const BrowserLogo = ({ name, size = 16 }: { name: string; size?: number }) => {
-    // Vivaldi and Opera ship PNG icons directly; all others use SVG wrappers.
-    // Matches the logic in the favicon effect below.
-    const isPngBrowser = name === 'vivaldi' || name === 'opera';
-    const defaultSrc = isPngBrowser
-      ? `/icons/${name}.png`
-      : `/favicon-${name}.svg`;
+    // Edge uses a favicon.run URL; Vivaldi and Opera ship PNG icons directly;
+    // all others use SVG wrappers from public/favicon-<name>.svg.
+    const defaultSrc = name === 'edge'
+      ? 'https://favicon.run/favicon?domain=explore.microsoft.com&sz=32'
+      : name === 'vivaldi' || name === 'opera'
+        ? `/icons/${name}.png`
+        : `/favicon-${name}.svg`;
     const [src, setSrc] = useState(defaultSrc);
 
     // Re-resolve the icon whenever the browser selection changes so the
@@ -444,10 +450,10 @@ export default function App() {
         height={size}
         className="shrink-0"
         onError={() => {
-          if (src.endsWith('.svg')) {
-            setSrc(`/icons/${name}.png`);
-          } else {
+          if (name === 'edge' || src.endsWith('.png')) {
             (document.getElementById(`logo-${name}`) as HTMLImageElement).style.display = 'none';
+          } else {
+            setSrc(`/icons/${name}.png`);
           }
         }}
         id={`logo-${name}`}
