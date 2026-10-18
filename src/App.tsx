@@ -406,12 +406,6 @@ export default function App() {
   }, [launchMethod, customTitle, customFavicon]);
 
   const handleStart = useCallback(async () => {
-    // Auto-Cloak: launch a cloaked tab instead of starting the stream here.
-    if (autoCloakEnabled) {
-      launchCloak();
-      window.location.href = cloakTargetUrl;
-      return;
-    }
     setUrlInput('');
     // Record the browser BEFORE awaiting, so the favicon flips the instant the
     // user commits to it. If start() fails the session never reaches
@@ -419,18 +413,38 @@ export default function App() {
     // favicon is correct again without an explicit rollback.
     setRunningBrowser(selectedBrowser);
     await api.start(selectedBrowser);
-  }, [api, selectedBrowser, autoCloakEnabled, launchCloak, cloakTargetUrl]);
+  }, [api, selectedBrowser]);
 
-  // Auto-cloak on page load: if Auto-Cloak is enabled, launch a cloaked tab.
-  // The main UI tab stays on the current URL; only the new cloaked tab opens.
-  // Uses a ref so it only fires once on mount, not on every re-render.
-  const autoCloakMounted = useRef(false);
+  // Auto-cloak on first user input: if Auto-Cloak is enabled in localStorage,
+  // launch a cloaked tab on the first click/keydown/touchstart anywhere on the
+  // page. Fires once, then removes the listeners.
+  const autoCloakInput = useRef(false);
   useEffect(() => {
-    if (autoCloakEnabled && !autoCloakMounted.current) {
-      autoCloakMounted.current = true;
-      launchCloak();
-    }
-  }, [autoCloakEnabled, launchCloak]);
+    const handleFirstInput = () => {
+      if (autoCloakInput.current) return;
+      let enabled = false;
+      try {
+        enabled = localStorage.getItem('cloak_autoCloakEnabled') === 'true';
+      } catch {
+        enabled = false;
+      }
+      if (enabled) {
+        autoCloakInput.current = true;
+        launchCloak();
+        document.removeEventListener('click', handleFirstInput);
+        document.removeEventListener('keydown', handleFirstInput);
+        document.removeEventListener('touchstart', handleFirstInput);
+      }
+    };
+    document.addEventListener('click', handleFirstInput);
+    document.addEventListener('keydown', handleFirstInput);
+    document.addEventListener('touchstart', handleFirstInput);
+    return () => {
+      document.removeEventListener('click', handleFirstInput);
+      document.removeEventListener('keydown', handleFirstInput);
+      document.removeEventListener('touchstart', handleFirstInput);
+    };
+  }, [launchCloak]);
 
   const handleStop = useCallback(async () => {
     await api.stop();
