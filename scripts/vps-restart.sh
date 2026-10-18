@@ -435,6 +435,25 @@ fi
 # Idempotent on purpose: re-loading module-null-sink on every restart leaks
 # sinks and leaves Chromium playing into a sink nobody is monitoring.
 echo "Configuring PulseAudio virtual sink..."
+# Restart a RUNNING daemon that lacks --exit-idle-time=-1. That flag only
+# takes effect at daemon birth, so a daemon started earlier without it (an old
+# script version, or anything else on the box) keeps PulseAudio's default
+# 20-second idle exit and silently kills audio mid-session -- while the plain
+# pgrep guard below sees "already running", skips the correct start, and the
+# broken daemon is never replaced. The [p] bracket keeps grep's OWN command
+# line from matching: without it the pattern (which is literally present in
+# grep's args) would always match and the guard would never fire.
+# Detection is flag-centric rather than matching the exact start spelling, so
+# a correctly-flagged daemon started by any variant (--start, --daemonize=yes)
+# is left alone.
+if pgrep -x pulseaudio >/dev/null 2>&1; then
+  if ! ps -eo args | grep -q '[p]ulseaudio.*--exit-idle-time=-1'; then
+    echo "  restarting PulseAudio with correct idle flag..."
+    pkill -9 -x pulseaudio || true
+    sleep 1
+  fi
+fi
+
 if ! pgrep -x pulseaudio >/dev/null 2>&1; then
   pulseaudio --start --exit-idle-time=-1 --log-target=stderr >/tmp/pulseaudio.log 2>&1 || true
   sleep 1
