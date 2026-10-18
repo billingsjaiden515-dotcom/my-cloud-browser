@@ -11,6 +11,10 @@
   --border: #2e3349;
   --primary: #6366f1;
   --primary-hover: #818cf8;
+  /* Foreground for text/icons rendered ON var(--primary) backgrounds. Base is
+     white (identical rendering for every theme that does not override it);
+     themes with bright accents override this instead of hardcoding white. */
+  --primary-text: #ffffff;
   --text: #e2e8f0;
   --muted: #8892a4;
   --error: #f87171;
@@ -162,6 +166,8 @@
   --border: #3d3621;
   --primary: #facc15;         /* Bright, vibrant gold */
   --primary-hover: #fde047;   /* Lighter pop on hover */
+  /* Black on #facc15 = 13.7:1; the inherited white was 1.53:1 (unreadable). */
+  --primary-text: #000000;
   --text: #fefce8;            /* Warm cream-white */
   --muted: #a1977d;           /* Brighter warm gray for readability */
 }

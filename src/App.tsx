@@ -245,7 +245,7 @@ export default function App() {
                 className="w-7 h-7 rounded-lg flex items-center justify-center"
                 style={{ background: 'var(--primary)', opacity: 0.9 }}
               >
-                <Monitor className="w-4 h-4 text-white" />
+                <Monitor className="w-4 h-4" style={{ color: 'var(--primary-text)' }} />
               </div>
               <span className="text-sm font-semibold hidden sm:block" style={{ color: 'var(--text)' }}>
                 Cloud Browser
@@ -316,8 +316,8 @@ export default function App() {
                 <button
                   onClick={handleStart}
                   disabled={isBusy}
-                  className="flex items-center gap-1.5 px-3 h-8 rounded-lg text-xs font-semibold text-white transition-colors"
-                  style={{ background: 'var(--primary)' }}
+                  className="flex items-center gap-1.5 px-3 h-8 rounded-lg text-xs font-semibold transition-colors"
+                  style={{ background: 'var(--primary)', color: 'var(--primary-text)' }}
                   onMouseEnter={e => (e.currentTarget.style.background = 'var(--primary-hover)')}
                   onMouseLeave={e => (e.currentTarget.style.background = 'var(--primary)')}
                 >
@@ -425,7 +425,7 @@ export default function App() {
                 className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors text-left"
                 style={{
                   background: theme === t.value ? 'var(--primary)' : 'transparent',
-                  color: theme === t.value ? 'white' : 'var(--text)',
+                  color: theme === t.value ? 'var(--primary-text)' : 'var(--text)',
                 }}
                 onMouseEnter={e => {
                   if (theme !== t.value) e.currentTarget.style.background = 'var(--surface-2)';
