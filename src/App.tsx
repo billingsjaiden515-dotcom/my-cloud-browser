@@ -94,6 +94,16 @@ const CLOAK_PRESETS: { label: string; title: string; favicon: string }[] = [
     title: 'How The Market Works',
     favicon: 'https://www.howthemarketworks.com/wp-content/uploads/2016/12/cropped-touch-icon-ipad-retina-32x32.png',
   },
+  {
+    label: 'New Tab',
+    title: 'New Tab',
+    favicon: 'https://www.google.com/favicon.ico',
+  },
+  {
+    label: 'Google',
+    title: 'Google',
+    favicon: 'https://www.google.com/favicon.ico',
+  },
 ];
 
 export default function App() {
