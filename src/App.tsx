@@ -1,7 +1,7 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
 import {
   Play, Square, X, Maximize2, Minimize2, Settings, Sun, Moon,
-  Monitor, Eye, EyeOff, AlertCircle, Globe, Loader2,
+  Monitor, Eye, EyeOff, AlertCircle, Globe, Loader2, Volume2, SlidersHorizontal,
 } from 'lucide-react';
 import { useRemoteBrowser } from '@/hooks/useRemoteBrowser';
 import { BrowserViewport } from '@/components/BrowserViewport';
@@ -45,6 +45,13 @@ const BROWSER_META: Record<string, { label: string }> = {
   waterfox: { label: 'Waterfox' },
 };
 
+// Audio bitrate mapping for Settings -> Audio -> Sound Quality.
+const AUDIO_BITRATE: Record<'low' | 'medium' | 'high', number> = {
+  low: 32000,
+  medium: 64000,
+  high: 128000,
+};
+
 export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const api = useRemoteBrowser(videoRef);
@@ -55,6 +62,25 @@ export default function App() {
   const [fullscreen, setFullscreen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showError, setShowError] = useState(true);
+
+  // ─── Audio settings (local Web Audio EQ + WebRTC bitrate) ───────────────
+  // All four values default per spec; volume 100-300%, bass/treble ±12 dB,
+  // quality Low/Medium/High -> 32/64/128 kbps. State is the source of truth;
+  // BrowserViewport applies volume/bass/treble to the Web Audio graph and the
+  // effect below applies quality -> maxBitrate on the RTCRtpSender.
+  const [audioSettings, setAudioSettings] = useState<{
+    volume: number;   // 100 .. 300
+    bass: number;     // -12 .. +12 (dB)
+    treble: number;   // -12 .. +12 (dB)
+    quality: 'low' | 'medium' | 'high';
+  }>({ volume: 100, bass: 0, treble: 0, quality: 'high' });
+
+  const resetAudio = useCallback(() => {
+    setAudioSettings({ volume: 100, bass: 0, treble: 0, quality: 'high' });
+  }, []);
+
+  const [settingsTab, setSettingsTab] = useState<'appearance' | 'audio'>('appearance');
+
   const [selectedBrowser, setSelectedBrowser] = useState('chromium');
   // Which browser the CURRENT session actually launched. Tracked separately
   // from selectedBrowser because the dropdown is hidden while connected, and
@@ -62,7 +88,7 @@ export default function App() {
   // favicon/title must describe what is running, not what is highlighted.
   const [runningBrowser, setRunningBrowser] = useState<string | null>(null);
 
-  const { connectionState, error, currentUrl, currentTitle, availableBrowsers } = api;
+  const { connectionState, error, currentUrl, currentTitle, availableBrowsers, setAudioBitrate } = api;
   const isConnected = connectionState === 'connected';
   const isConnecting = connectionState === 'connecting';
   const isBusy = isConnecting;
@@ -81,6 +107,14 @@ export default function App() {
   useEffect(() => {
     if (error) setShowError(true);
   }, [error]);
+
+  // Apply the selected Sound Quality -> maxBitrate on the audio RTCRtpSender.
+  // Runs whenever connected or the quality changes, so the default "High"
+  // (128000 kbps) is applied on session start and changes take effect live.
+  useEffect(() => {
+    if (!isConnected) return;
+    setAudioBitrate(AUDIO_BITRATE[audioSettings.quality]).catch(() => {});
+  }, [isConnected, audioSettings.quality, setAudioBitrate]);
 
   // Clear the running browser when the session ends WITHOUT going through
   // handleStop (crash, 410 session_dead, WebRTC drop). Without this the tab
@@ -414,10 +448,23 @@ export default function App() {
           >
             <X className="w-4 h-4" />
           </button>
-          <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text)' }}>
-            Appearance
-          </h3>
-          <div className="space-y-1">
+          <div className="flex gap-1 mb-3">
+            <button
+              onClick={() => setSettingsTab('appearance')}
+              className={`flex-1 px-2 py-1.5 text-xs rounded-lg border transition-colors ${settingsTab === 'appearance' ? 'bg-primary border-primary' : 'border-transparent text-muted hover:bg-surface-2'}`}
+              style={{ color: settingsTab === 'appearance' ? 'var(--primary-text)' : 'var(--muted)' }}
+            >
+              Appearance
+            </button>
+            <button
+              onClick={() => setSettingsTab('audio')}
+              className={`flex-1 px-2 py-1.5 text-xs rounded-lg border transition-colors ${settingsTab === 'audio' ? 'bg-primary border-primary' : 'border-transparent text-muted hover:bg-surface-2'}`}
+              style={{ color: settingsTab === 'audio' ? 'var(--primary-text)' : 'var(--muted)' }}
+            >
+              <Volume2 className="w-3 h-3 mr-1" /> Audio
+            </button>
+          </div>
+          <div className="space-y-1" style={{ display: settingsTab === 'appearance' ? 'block' : 'none' }}>
             {THEMES.map(t => (
               <button
                 key={t.value}
@@ -444,6 +491,79 @@ export default function App() {
               </button>
             ))}
           </div>
+          <div className="space-y-3" style={{ display: settingsTab === 'audio' ? 'block' : 'none' }}>
+            <div>
+              <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
+                <span>Volume Boost</span>
+                <span>{audioSettings.volume}%</span>
+              </div>
+              <input
+                type="range"
+                min="100"
+                max="300"
+                step="10"
+                value={audioSettings.volume}
+                onChange={e => setAudioSettings(s => ({ ...s, volume: Number(e.target.value) }))}
+                className="w-full h-2 bg-surface-2 rounded-lg appearance-none cursor-pointer"
+                style={{ accentColor: 'var(--primary)' }}
+              />
+            </div>
+            <div>
+              <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
+                <span>Bass Boost</span>
+                <span>{audioSettings.bass} dB</span>
+              </div>
+              <input
+                type="range"
+                min="-12"
+                max="12"
+                step="1"
+                value={audioSettings.bass}
+                onChange={e => setAudioSettings(s => ({ ...s, bass: Number(e.target.value) }))}
+                className="w-full h-2 bg-surface-2 rounded-lg appearance-none cursor-pointer"
+                style={{ accentColor: 'var(--primary)' }}
+              />
+            </div>
+            <div>
+              <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
+                <span>Treble Boost</span>
+                <span>{audioSettings.treble} dB</span>
+              </div>
+              <input
+                type="range"
+                min="-12"
+                max="12"
+                step="1"
+                value={audioSettings.treble}
+                onChange={e => setAudioSettings(s => ({ ...s, treble: Number(e.target.value) }))}
+                className="w-full h-2 bg-surface-2 rounded-lg appearance-none cursor-pointer"
+                style={{ accentColor: 'var(--primary)' }}
+              />
+            </div>
+            <div>
+              <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
+                <span>Sound Quality</span>
+                <span>{audioSettings.quality === 'high' ? 'High' : audioSettings.quality === 'medium' ? 'Medium' : 'Low'}</span>
+              </div>
+              <select
+                value={audioSettings.quality}
+                onChange={e => setAudioSettings(s => ({ ...s, quality: e.target.value as 'low' | 'medium' | 'high' }))}
+                className="w-full bg-surface-2 border rounded-lg text-xs cursor-pointer"
+                style={{ borderColor: 'var(--border)', color: 'var(--text)', borderRadius: '0.5rem' }}
+              >
+                <option value="low">Low (32 kbps)</option>
+                <option value="medium">Medium (64 kbps)</option>
+                <option value="high">High (128 kbps)</option>
+              </select>
+            </div>
+            <button
+              onClick={resetAudio}
+              className="w-full px-3 py-1.5 text-xs border rounded-lg transition-colors cursor-pointer"
+              style={{ borderColor: 'var(--border)', color: 'var(--muted)', borderRadius: '0.5rem' }}
+            >
+              <SlidersHorizontal className="w-3 h-3 mr-2" /> Reset to Defaults
+            </button>
+          </div>
         </div>
       )}
 
@@ -457,6 +577,9 @@ export default function App() {
           connectionState={connectionState}
           videoRef={videoRef}
           immersive={immersive}
+          volume={audioSettings.volume}
+          bass={audioSettings.bass}
+          treble={audioSettings.treble}
         />
       </div>
 

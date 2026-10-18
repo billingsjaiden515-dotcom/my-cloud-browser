@@ -56,6 +56,7 @@ export interface RemoteBrowserApi {
   sendKeyUp: (key: string) => Promise<void>;
   sendKeyPress: (key: string) => Promise<void>;
   typeText: (text: string) => Promise<void>;
+  setAudioBitrate: (bps: number) => Promise<void>;
 }
 
 export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): RemoteBrowserApi {
@@ -232,6 +233,31 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
     clearPollLoop('stop');
   }, [clearPollLoop]);
 
+  // ─── Audio bitrate control (WebRTC) ─────────────────────────────────────
+  // The connection is receive-only for the remote stream, so there is no
+  // natural audio sender. A silent sendonly audio transceiver is created at
+  // pc setup (below) purely to expose an RTCRtpSender whose maxBitrate we can
+  // adjust via RTCRtpSender.setParameters(). This is the client-side half of
+  // the "Sound Quality" control in Settings -> Audio.
+  const setAudioBitrate = useCallback(async (bps: number) => {
+    const pc = pcRef.current;
+    if (!pc) return;
+    const sender = pc.getSenders().find(s => s.track?.kind === 'audio');
+    if (!sender) {
+      console.warn('[Client] No audio sender available; cannot set maxBitrate', bps);
+      return;
+    }
+    try {
+      const params = sender.getParameters();
+      if (!params.encodings) params.encodings = [{}];
+      params.encodings[0].maxBitrate = bps;
+      await sender.setParameters(params);
+      console.log('[Client] Audio maxBitrate set to', bps);
+    } catch (e) {
+      console.warn('[Client] setParameters(maxBitrate) failed:', e);
+    }
+  }, []);
+
   const setupWebRTC = useCallback((sid: string, iceServers: RTCIceServer[]) => {
     const pc = new RTCPeerConnection({ iceServers });
 
@@ -374,6 +400,21 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
     pc.addTransceiver('audio', { direction: 'recvonly' });
 
     pcRef.current = pc;
+
+    // Create a silent audio sender so maxBitrate can be controlled client-side.
+    // The remote stream is receive-only; this sender carries silence and exists
+    // purely as the bitrate control surface for Settings -> Audio -> Quality.
+    try {
+      const win = window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext };
+      const Ctx = win.AudioContext ?? win.webkitAudioContext;
+      if (Ctx) {
+        const silentTrack = new Ctx().createMediaStreamDestination().stream.getAudioTracks()[0];
+        if (silentTrack) pc.addTransceiver(silentTrack, { direction: 'sendonly' });
+      }
+    } catch (e) {
+      console.warn('[Client] Could not create silent audio sender (bitrate control disabled):', e);
+    }
+
     return pc;
   }, [videoRef, sendSignal]);
 
@@ -695,5 +736,6 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
     sendKeyUp,
     sendKeyPress,
     typeText,
+    setAudioBitrate,
   };
 }

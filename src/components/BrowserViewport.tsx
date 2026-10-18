@@ -6,6 +6,12 @@ interface BrowserViewportProps {
   connectionState: ConnectionState;
   videoRef: React.RefObject<HTMLVideoElement>;
   immersive: boolean;
+  /** Local volume boost, 100-300 (% -> 1.0-3.0 gain). */
+  volume: number;
+  /** Bass shelf gain in dB (-12..12). */
+  bass: number;
+  /** Treble shelf gain in dB (-12..12). */
+  treble: number;
 }
 
 // Keys that need to be prevented from triggering browser shortcuts
@@ -28,7 +34,7 @@ const KEY_MAP: Record<string, string> = {
 // Track which modifiers are currently held down
 const MODIFIER_KEYS = new Set(['Control', 'Shift', 'Alt', 'Meta']);
 
-export function BrowserViewport({ api, connectionState, videoRef, immersive }: BrowserViewportProps) {
+export function BrowserViewport({ api, connectionState, videoRef, immersive, volume, bass, treble }: BrowserViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const isConnected = connectionState === 'connected';
   // Track drag state: which button is currently held down
@@ -41,6 +47,55 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
   const updateViewportRef = useCallback((w: number, h: number) => {
     viewportRef.current = { w, h };
   }, []);
+
+  // ─── Local Web Audio graph ──────────────────────────────────────────────
+  // Built lazily on session connect (a user gesture) to satisfy autoplay
+  // policy. Chain: MediaElementSource(video) -> Bass(lowshelf ~200Hz) ->
+  // Treble(highshelf ~3kHz) -> Gain(volume) -> AudioContext.destination.
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const bassRef = useRef<BiquadFilterNode | null>(null);
+  const trebleRef = useRef<BiquadFilterNode | null>(null);
+  const gainRef = useRef<GainNode | null>(null);
+  const graphBuiltRef = useRef(false);
+
+  const buildAudioGraph = useCallback((videoEl: HTMLVideoElement) => {
+    if (graphBuiltRef.current) return;
+    const Ctx = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const source = ctx.createMediaElementSource(videoEl);
+    const bass = ctx.createBiquadFilter();
+    bass.type = 'lowshelf';
+    bass.frequency.value = 200;
+    const treble = ctx.createBiquadFilter();
+    treble.type = 'highshelf';
+    treble.frequency.value = 3000;
+    const gain = ctx.createGain();
+    source.connect(bass);
+    bass.connect(treble);
+    treble.connect(gain);
+    gain.connect(ctx.destination);
+    audioCtxRef.current = ctx;
+    bassRef.current = bass;
+    trebleRef.current = treble;
+    gainRef.current = gain;
+    graphBuiltRef.current = true;
+    if (ctx.state === 'suspended') {
+      // AudioContext resume requires a user gesture; it may be blocked until
+      // the user interacts with the page (e.g. the Start click).
+      ctx.resume().catch(() => {
+        // Intentional no-op: resume is best-effort until a gesture occurs.
+      });
+    }
+  }, []);
+
+  // Push React slider values into the live Web Audio nodes.
+  useEffect(() => {
+    if (!gainRef.current) return;
+    gainRef.current.gain.value = volume / 100;
+    if (bassRef.current) bassRef.current.gain.value = bass;
+    if (trebleRef.current) trebleRef.current.gain.value = treble;
+  }, [volume, bass, treble]);
 
   // Sizing: the video FILLS its container 100%x100% with object-fit 'cover'
   // (top-left anchored). Rationale: an aspect-preserving "fit" box can never
@@ -193,7 +248,16 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
     e.preventDefault();
   }, []);
 
-  // Disconnect cleanup: release mouse buttons and clear modifiers on disconnect
+  // Build the Web Audio graph on session connect — a user gesture (Start),
+  // which satisfies the browser autoplay policy for AudioContext.
+  useEffect(() => {
+    if (!isConnected) return;
+    const video = videoRef.current;
+    if (video && !graphBuiltRef.current) buildAudioGraph(video);
+  }, [isConnected, buildAudioGraph, videoRef]);
+
+  // Disconnect cleanup: release mouse buttons, clear modifiers, and close the
+  // AudioContext so a fresh graph (and default levels) rebuild on reconnect.
   useEffect(() => {
     if (!isConnected) {
       if (dragRef.current) {
@@ -201,6 +265,16 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive }: B
         dragRef.current = null;
       }
       ['Control', 'Shift', 'Alt', 'Meta'].forEach(mod => api.sendKeyUp(mod));
+      if (audioCtxRef.current) {
+        try { audioCtxRef.current.close(); } catch {
+          // Close is best-effort on disconnect.
+        }
+        audioCtxRef.current = null;
+      }
+      bassRef.current = null;
+      trebleRef.current = null;
+      gainRef.current = null;
+      graphBuiltRef.current = false;
     }
   }, [isConnected, api]);
 
