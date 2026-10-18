@@ -76,22 +76,22 @@ const CLOAK_PRESETS: { label: string; title: string; favicon: string }[] = [
   },
   {
     label: 'Skyward',
-    title: 'Skyward',
+    title: 'Login - Powered by Skyward',
     favicon: 'https://skyweb.dsisdtx.us/favicon.ico',
   },
   {
     label: 'Gmail',
-    title: 'Inbox - Gmail',
+    title: 'Inbox (899) - Michael.Towns@dsisdconnect.com - ...',
     favicon: 'https://ssl.gstatic.com/ui/v1/icons/mail/rfr/gmail.ico',
   },
   {
     label: 'iCEV',
-    title: 'iCEV',
+    title: 'iCEV | Content | Principles Of Business - HILL - period 03 | Key Concepts ...',
     favicon: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAyhpVFh0WE1MOmNvbS5hZG9iZS54bXAAAAAAADw/eHBhY2tldCBiZWdpbj0i77u/IiBpZD0iVzVNME1wQ2VoaUh6cmVTek5UY3prYzlkIj8+IDx4OnhtcG1ldGEgeG1sbnM6eD0iYWRvYmU6bnM6bWV0YS8iIHg6eG1wdGs9IkFkb2JlIFhNUCBDb3JlIDcuMS1jMDAwIDc5LjljY2M0ZGU5MywgMjAyMi8wMy8xNC0xNDowNzoyMiAgICAgICAgIj4gPHJkZjpSREYgeG1sbnM6cmRmPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5LzAyLzIyLXJkZi1zeW50YXgtbnMjIj4gPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9IiIgeG1sbnM6eG1wPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvIiB4bWxuczp4bXBNTT0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wL21tLyIgeG1sbnM6c3RSZWY9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9zVHlwZS9SZXNvdXJjZVJlZiMiIHhtcDpDcmVhdG9yVG9vbD0iQWRvYmUgUGhvdG9zaG9wIDIzLjMgKE1hY2ludG9zaCkiIHhtcE1NOkluc3RhbmNlSUQ9InhtcC5paWQ6NjVFM0U5MDdCODEyMTFFQ0I5NDZCNjhENUIzNTg5REUiIHhtcE1NOkRvY3VtZW50SUQ9InhtcC5kaWQ6NjVFM0U5MDhCODEyMTFFQ0I5NDZCNjhENUIzNTg5REUiPiA8eG1wTU06RGVyaXZlZEZyb20gc3RSZWY6aW5zdGFuY2VJRD0ieG1wLmlpZDo2NUUzRTkwNUI4MTIxMUVDQjk0NkI2OEQ1QjM1ODlERSIgc3RSZWY6ZG9jdW1lbnRJRD0ieG1wLmRpZDo2NUUzRTkwNkI4MTIxMUVDQjk0NkI2OEQ1QjM1ODlERSIvPiA8L3JkZjpEZXNjcmlwdGlvbj4gPC9yZGY6UkRGPiA8L3g6eG1wbWV0YT4gPD94cGFja2V0IGVuZD0iciI/PktiPBoAAAGFSURBVHja7NO/S8NAFAfwe3fXYlN/YLXUof5At4KDOCp2E3FQRHFxdeiggw7+DeLg5uTo5G4RHUQ7Ogil4KIWUbEFLbaNSdv0cuc3Tu5u4sEnXN4Ll/fCCxlj2G8WZ79cf+AAuZvbZDLUnnl5Hnkq5CfHQ6F2GnEFN9AFAxCGEvTCMRRhEmbl3UeeMUOjp+epTK1aXhBSHSJRgxlYh0c4Aw8yELxgDo7gVVJbD9WqiZTXiC92WuoARe38qHAlqBKScAlrcAX7MAILsl5pTler+lap8DXneolInyBhG1TFiPUwwx4YowvEtNYyh1hW8PaW1mJPG3kvJlbHEpbVKJIMZ+v17iGl5LI2lOZcRTFjFSLVLUQrRVxNJeKFy0i4krfd/mErUt5OxG5c2sjO41CTJGoNOp/RmOtYca3IcN70fEV9xvguM+rN+H6Dk+srj9mO09WSwrYF917o3Sl9NxsMNCcj0EIU2w6jWTDkLi5NfGQ/uEFb388RQ1LzEPY+/f8L7EuAAQBY8agFnYgsqAAAAABJRU5ErkJggg==',
   },
   {
     label: 'How The Market Works',
-    title: 'How The Market Works',
+    title: 'HowTheMarketWorks.com - Virtual Trading - Trading Stocks',
     favicon: 'https://www.howthemarketworks.com/wp-content/uploads/2016/12/cropped-touch-icon-ipad-retina-32x32.png',
   },
   {
@@ -162,11 +162,15 @@ export default function App() {
   const [launchMethod, setLaunchMethod] = useState<'about:blank' | 'blob:'>(
     () => loadCloakState('cloak_launchMethod', 'about:blank')
   );
+  const [cloakTargetUrl, setCloakTargetUrl] = useState<string>(() =>
+    loadCloakState('cloak_targetUrl', 'https://google.com')
+  );
 
   useEffect(() => { saveCloakState('cloak_customTitle', customTitle); }, [customTitle]);
   useEffect(() => { saveCloakState('cloak_customFavicon', customFavicon); }, [customFavicon]);
   useEffect(() => { saveCloakState('cloak_autoCloakEnabled', autoCloakEnabled); }, [autoCloakEnabled]);
   useEffect(() => { saveCloakState('cloak_launchMethod', launchMethod); }, [launchMethod]);
+  useEffect(() => { saveCloakState('cloak_targetUrl', cloakTargetUrl); }, [cloakTargetUrl]);
 
   const [settingsTab, setSettingsTab] = useState<'appearance' | 'audio' | 'cloaking'>('appearance');
 
@@ -356,6 +360,15 @@ export default function App() {
       return;
     }
 
+    // Escape hatch: Escape closes the cloaked tab and returns focus to the
+    // original Cloud Browser tab.
+    w.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        w.close();
+        window.focus();
+      }
+    });
+
     const applyCloak = () => {
       try {
         const doc = w.document;
@@ -396,6 +409,7 @@ export default function App() {
     // Auto-Cloak: launch a cloaked tab instead of starting the stream here.
     if (autoCloakEnabled) {
       launchCloak();
+      window.location.href = cloakTargetUrl;
       return;
     }
     setUrlInput('');
@@ -405,7 +419,19 @@ export default function App() {
     // favicon is correct again without an explicit rollback.
     setRunningBrowser(selectedBrowser);
     await api.start(selectedBrowser);
-  }, [api, selectedBrowser, autoCloakEnabled, launchCloak]);
+  }, [api, selectedBrowser, autoCloakEnabled, launchCloak, cloakTargetUrl]);
+
+  // Auto-cloak on page load: if Auto-Cloak is enabled, launch a cloaked tab
+  // and immediately redirect the current tab to the cloak target URL.
+  // Uses a ref so it only fires once on mount, not on every re-render.
+  const autoCloakMounted = useRef(false);
+  useEffect(() => {
+    if (autoCloakEnabled && !autoCloakMounted.current) {
+      autoCloakMounted.current = true;
+      launchCloak();
+      window.location.href = cloakTargetUrl;
+    }
+  }, [autoCloakEnabled, launchCloak, cloakTargetUrl]);
 
   const handleStop = useCallback(async () => {
     await api.stop();
@@ -787,7 +813,7 @@ export default function App() {
                 <button
                   key={p.label}
                   onClick={() => applyPreset(p)}
-                  title={p.label}
+                  title={p.title}
                   className="flex flex-col items-center gap-1 px-1 py-2 rounded-lg border transition-colors cursor-pointer"
                   style={{
                     borderColor: 'var(--border)',
@@ -882,6 +908,19 @@ export default function App() {
                 <option value="about:blank">about:blank</option>
                 <option value="blob:">blob:</option>
               </select>
+            </div>
+            <div>
+              <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
+                <span>Cloak Target URL</span>
+              </div>
+              <input
+                type="text"
+                value={cloakTargetUrl}
+                onChange={e => setCloakTargetUrl(e.target.value)}
+                placeholder="https://google.com"
+                className="w-full bg-surface-2 border rounded-lg text-xs outline-none"
+                style={{ borderColor: 'var(--border)', color: 'var(--text)', borderRadius: '0.5rem' }}
+              />
             </div>
             <button
               onClick={launchCloak}
