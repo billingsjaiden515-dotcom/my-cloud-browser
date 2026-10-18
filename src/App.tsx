@@ -422,7 +422,20 @@ export default function App() {
 
   // Browser logo component - supports SVG and PNG icons
   const BrowserLogo = ({ name, size = 16 }: { name: string; size?: number }) => {
-    const [src, setSrc] = useState(`/icons/${name}.svg`);
+    // Vivaldi and Opera ship PNG icons directly; all others use SVG wrappers.
+    // Matches the logic in the favicon effect below.
+    const isPngBrowser = name === 'vivaldi' || name === 'opera';
+    const defaultSrc = isPngBrowser
+      ? `/icons/${name}.png`
+      : `/favicon-${name}.svg`;
+    const [src, setSrc] = useState(defaultSrc);
+
+    // Re-resolve the icon whenever the browser selection changes so the
+    // displayed logo always matches the selected browser.
+    useEffect(() => {
+      setSrc(defaultSrc);
+    }, [name, defaultSrc]);
+
     return (
       <img
         src={src}
@@ -431,7 +444,6 @@ export default function App() {
         height={size}
         className="shrink-0"
         onError={() => {
-          // Try PNG fallback, then globe icon
           if (src.endsWith('.svg')) {
             setSrc(`/icons/${name}.png`);
           } else {
