@@ -124,6 +124,14 @@ export function createServer(): { server: http.Server; sessionManager: SessionMa
     });
   });
 
+  // ─── Stream settings (FPS switcher wiring) ─────────────────────────────────
+
+  app.post('/api/stream-fps', (req, res) => {
+    const { fps } = req.body as { fps?: string | number };
+    console.log(`[HTTP] /api/stream-fps target fps=${String(fps)} (logged; will be applied by the H.264 pipeline rewrite)`);
+    res.json({ status: 'ok', fps: fps ?? null });
+  });
+
   // ─── Navigation ───────────────────────────────────────────────────────────────
 
   app.post('/api/navigate', async (req, res) => {

@@ -61,6 +61,9 @@ interface SystemStats {
   freeMemMB: number;
 }
 
+/** Target FPS options for Settings > Appearance > Stream Settings. */
+const FPS_OPTIONS = ['15', '20', '30', '40', '60', 'unlimited'] as const;
+
 // Tab Cloaking presets: clickable tiles that pre-fill the Title / Favicon inputs.
 const CLOAK_PRESETS: { label: string; title: string; favicon: string }[] = [
   {
@@ -223,6 +226,34 @@ export default function App() {
     conn: '—',
     audio: '—',
   });
+
+  // ─── Stream Settings (Target FPS) ──────────────────────────────────────────
+  // Persisted under stream_fps (default 30) and POSTed to the backend on mount
+  // and on every change, so the wiring is ready for the H.264 pipeline rewrite.
+  const [targetFps, setTargetFps] = useState<string>(() => {
+    try {
+      const stored = localStorage.getItem('stream_fps');
+      if (stored && (FPS_OPTIONS as readonly string[]).includes(stored)) return stored;
+    } catch {
+      // localStorage unavailable — fall through to the default.
+    }
+    return '30';
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('stream_fps', targetFps);
+    } catch {
+      // localStorage unavailable — keep the in-memory value.
+    }
+    fetch('/api/stream-fps', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fps: targetFps }),
+    }).catch(() => {
+      // Backend offline — the value is still persisted locally.
+    });
+  }, [targetFps]);
 
   const [selectedBrowser, setSelectedBrowser] = useState('chromium');
   // Which browser the CURRENT session actually launched. Tracked separately
@@ -962,6 +993,30 @@ export default function App() {
                 )}
               </button>
             ))}
+          </div>
+          <div className="space-y-3" style={{ display: settingsTab === 'appearance' ? 'block' : 'none' }}>
+            <div className="pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
+              <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
+                <span>Stream Settings</span>
+              </div>
+              <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
+                <span>Target FPS</span>
+                <span>{targetFps === 'unlimited' ? 'Unlimited' : targetFps}</span>
+              </div>
+              <select
+                value={targetFps}
+                onChange={e => setTargetFps(e.target.value)}
+                className="w-full bg-surface-2 border rounded-lg text-xs cursor-pointer"
+                style={{ borderColor: 'var(--border)', color: 'var(--text)', borderRadius: '0.5rem' }}
+              >
+                <option value="15">15</option>
+                <option value="20">20</option>
+                <option value="30">30</option>
+                <option value="40">40</option>
+                <option value="60">60</option>
+                <option value="unlimited">Unlimited</option>
+              </select>
+            </div>
           </div>
           <div className="space-y-3" style={{ display: settingsTab === 'audio' ? 'block' : 'none' }}>
             <div>
