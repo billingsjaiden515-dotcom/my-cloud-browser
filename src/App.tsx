@@ -75,17 +75,17 @@ const CLOAK_PRESETS: { label: string; title: string; favicon: string }[] = [
     favicon: 'https://favicon.run/favicon?domain=dsisd.instructure.com&sz=48',
   },
   {
-    label: 'Skyward',
+    label: 'Login - Powered by Skyward',
     title: 'Login - Powered by Skyward',
     favicon: 'https://skyweb.dsisdtx.us/favicon.ico',
   },
   {
-    label: 'Gmail',
+    label: 'Inbox (899) - Michael.Towns@dsisdconnect.com - ...',
     title: 'Inbox (899) - Michael.Towns@dsisdconnect.com - ...',
     favicon: 'https://ssl.gstatic.com/ui/v1/icons/mail/rfr/gmail.ico',
   },
   {
-    label: 'iCEV',
+    label: 'iCEV | Content | Principles Of Business - HILL - period 03 | Key Concepts ...',
     title: 'iCEV | Content | Principles Of Business - HILL - period 03 | Key Concepts ...',
     favicon: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAyhpVFh0WE1MOmNvbS5hZG9iZS54bXAAAAAAADw/eHBhY2tldCBiZWdpbj0i77u/IiBpZD0iVzVNME1wQ2VoaUh6cmVTek5UY3prYzlkIj8+IDx4OnhtcG1ldGEgeG1sbnM6eD0iYWRvYmU6bnM6bWV0YS8iIHg6eG1wdGs9IkFkb2JlIFhNUCBDb3JlIDcuMS1jMDAwIDc5LjljY2M0ZGU5MywgMjAyMi8wMy8xNC0xNDowNzoyMiAgICAgICAgIj4gPHJkZjpSREYgeG1sbnM6cmRmPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5LzAyLzIyLXJkZi1zeW50YXgtbnMjIj4gPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9IiIgeG1sbnM6eG1wPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvIiB4bWxuczp4bXBNTT0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wL21tLyIgeG1sbnM6c3RSZWY9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9zVHlwZS9SZXNvdXJjZVJlZiMiIHhtcDpDcmVhdG9yVG9vbD0iQWRvYmUgUGhvdG9zaG9wIDIzLjMgKE1hY2ludG9zaCkiIHhtcE1NOkluc3RhbmNlSUQ9InhtcC5paWQ6NjVFM0U5MDdCODEyMTFFQ0I5NDZCNjhENUIzNTg5REUiIHhtcE1NOkRvY3VtZW50SUQ9InhtcC5kaWQ6NjVFM0U5MDhCODEyMTFFQ0I5NDZCNjhENUIzNTg5REUiPiA8eG1wTU06RGVyaXZlZEZyb20gc3RSZWY6aW5zdGFuY2VJRD0ieG1wLmlpZDo2NUUzRTkwNUI4MTIxMUVDQjk0NkI2OEQ1QjM1ODlERSIgc3RSZWY6ZG9jdW1lbnRJRD0ieG1wLmRpZDo2NUUzRTkwNkI4MTIxMUVDQjk0NkI2OEQ1QjM1ODlERSIvPiA8L3JkZjpEZXNjcmlwdGlvbj4gPC9yZGY6UkRGPiA8L3g6eG1wbWV0YT4gPD94cGFja2V0IGVuZD0iciI/PktiPBoAAAGFSURBVHja7NO/S8NAFAfwe3fXYlN/YLXUof5At4KDOCp2E3FQRHFxdeiggw7+DeLg5uTo5G4RHUQ7Ogil4KIWUbEFLbaNSdv0cuc3Tu5u4sEnXN4Ll/fCCxlj2G8WZ79cf+AAuZvbZDLUnnl5Hnkq5CfHQ6F2GnEFN9AFAxCGEvTCMRRhEmbl3UeeMUOjp+epTK1aXhBSHSJRgxlYh0c4Aw8yELxgDo7gVVJbD9WqiZTXiC92WuoARe38qHAlqBKScAlrcAX7MAILsl5pTler+lap8DXneolInyBhG1TFiPUwwx4YowvEtNYyh1hW8PaW1mJPG3kvJlbHEpbVKJIMZ+v17iGl5LI2lOZcRTFjFSLVLUQrRVxNJeKFy0i4krfd/mErUt5OxG5c2sjO41CTJGoNOp/RmOtYca3IcN70fEV9xvguM+rN+H6Dk+srj9mO09WSwrYF917o3Sl9NxsMNCcj0EIU2w6jWTDkLi5NfGQ/uEFb388RQ1LzEPY+/f8L7EuAAQBY8agFnYgsqAAAAABJRU5ErkJggg==',
   },
@@ -110,14 +110,6 @@ const CLOAK_PRESETS: { label: string; title: string; favicon: string }[] = [
 // opens this named window, and window.open with the same name then recovers a
 // reference to it so the cloak injection can run.
 const CLOAK_WINDOW_NAME = 'cloud-browser-cloak';
-
-// Resolve the title a cloak window should show: when the Custom Tab Title
-// input holds a preset's short label (e.g. "HTMW"), use that preset's full
-// title; free-typed text is used as-is so a manual override still wins.
-const resolveCloakTitle = (input: string): string => {
-  const preset = CLOAK_PRESETS.find(p => p.label === input);
-  return (preset ? preset.title : input) || 'Cloud Browser';
-};
 
 export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -351,8 +343,9 @@ export default function App() {
 
   // ─── Tab Cloak: preset application + reset ───────────────────────────────
   const applyPreset = useCallback((p: { label: string; title: string; favicon: string }) => {
-    // Populate the input with the short label (e.g. "HTMW"); launchCloak maps
-    // it back to the preset's full title for the cloaked document.
+    // Populate the input with the preset's label (the long name for most
+    // presets, "HTMW" for HowTheMarketWorks); launchCloak maps it back to the
+    // preset's title for the cloaked document.
     setCustomTitle(p.label);
     setCustomFavicon(p.favicon);
   }, []);
@@ -366,7 +359,11 @@ export default function App() {
   // Escape hatch + iframe + title/favicon injection for an already-opened
   // cloak window.
   const cloakWindow = useCallback((w: Window) => {
-    const cloakTitle = resolveCloakTitle(customTitle);
+    // Cloaked tab title: look up the preset's `title` (the long, realistic
+    // name) by the `label` currently in the input; free-typed text is used
+    // as-is so a manual override in the Custom Tab Title input still wins.
+    const matched = CLOAK_PRESETS.find(p => p.label === customTitle);
+    const finalTitle = matched ? matched.title : customTitle;
 
     // Escape hatch: Escape closes the cloaked tab and returns focus to the
     // original Cloud Browser tab.
@@ -389,7 +386,7 @@ export default function App() {
         doc.body.appendChild(iframe);
 
         // Update the new window's title and favicon.
-        doc.title = cloakTitle;
+        doc.title = finalTitle || 'Cloud Browser';
         let cloakLink = doc.querySelector<HTMLLinkElement>('link[rel~="icon"]');
         if (!cloakLink) {
           cloakLink = doc.createElement('link');
@@ -423,7 +420,11 @@ export default function App() {
     let w: Window | null = existingWindow ?? null;
     if (!w) {
       if (launchMethod === 'blob:') {
-        const html = `<!DOCTYPE html><html><head><title>${resolveCloakTitle(customTitle)}</title></head><body></body></html>`;
+        // Seed the blob document with the same resolved title; cloakWindow
+        // re-applies it (plus favicon + iframe) once the window exists.
+        const matched = CLOAK_PRESETS.find(p => p.label === customTitle);
+        const finalTitle = matched ? matched.title : customTitle;
+        const html = `<!DOCTYPE html><html><head><title>${finalTitle || 'Cloud Browser'}</title></head><body></body></html>`;
         const blob = new Blob([html], { type: 'text/html' });
         const blobUrl = URL.createObjectURL(blob);
         w = window.open(blobUrl, '_blank');
