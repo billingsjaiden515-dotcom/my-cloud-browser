@@ -106,6 +106,19 @@ const CLOAK_PRESETS: { label: string; title: string; favicon: string }[] = [
   },
 ];
 
+// Named window target used by the proxy-style on-load spawn: the hidden anchor
+// opens this named window, and window.open with the same name then recovers a
+// reference to it so the cloak injection can run.
+const CLOAK_WINDOW_NAME = 'cloud-browser-cloak';
+
+// Resolve the title a cloak window should show: when the Custom Tab Title
+// input holds a preset's short label (e.g. "HTMW"), use that preset's full
+// title; free-typed text is used as-is so a manual override still wins.
+const resolveCloakTitle = (input: string): string => {
+  const preset = CLOAK_PRESETS.find(p => p.label === input);
+  return (preset ? preset.title : input) || 'Cloud Browser';
+};
+
 export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const api = useRemoteBrowser(videoRef);
@@ -159,6 +172,9 @@ export default function App() {
   const [autoCloakEnabled, setAutoCloakEnabled] = useState<boolean>(() =>
     loadCloakState('cloak_autoCloakEnabled', false)
   );
+  const [antiCloseEnabled, setAntiCloseEnabled] = useState<boolean>(() =>
+    loadCloakState('cloak_antiCloseEnabled', false)
+  );
   const [launchMethod, setLaunchMethod] = useState<'about:blank' | 'blob:'>(
     () => loadCloakState('cloak_launchMethod', 'about:blank')
   );
@@ -169,6 +185,7 @@ export default function App() {
   useEffect(() => { saveCloakState('cloak_customTitle', customTitle); }, [customTitle]);
   useEffect(() => { saveCloakState('cloak_customFavicon', customFavicon); }, [customFavicon]);
   useEffect(() => { saveCloakState('cloak_autoCloakEnabled', autoCloakEnabled); }, [autoCloakEnabled]);
+  useEffect(() => { saveCloakState('cloak_antiCloseEnabled', antiCloseEnabled); }, [antiCloseEnabled]);
   useEffect(() => { saveCloakState('cloak_launchMethod', launchMethod); }, [launchMethod]);
   useEffect(() => { saveCloakState('cloak_targetUrl', cloakTargetUrl); }, [cloakTargetUrl]);
 
@@ -345,27 +362,11 @@ export default function App() {
     setCustomFavicon('');
   }, []);
 
-  // ─── Tab Cloak: launch a cloaked tab ─────────────────────────────────────
-  const launchCloak = useCallback(() => {
-    // The input may hold a preset's short label (e.g. "HTMW"); cloak the tab
-    // with that preset's full title. Free-typed text is used as-is, so a manual
-    // override in the Custom Tab Title input still wins.
-    const presetMatch = CLOAK_PRESETS.find(p => p.label === customTitle);
-    const cloakTitle = (presetMatch ? presetMatch.title : customTitle) || 'Cloud Browser';
-    let w;
-    if (launchMethod === 'blob:') {
-      const html = `<!DOCTYPE html><html><head><title>${cloakTitle}</title></head><body></body></html>`;
-      const blob = new Blob([html], { type: 'text/html' });
-      const blobUrl = URL.createObjectURL(blob);
-      w = window.open(blobUrl, '_blank');
-    } else {
-      w = window.open('about:blank', '_blank');
-    }
-
-    if (!w || w.closed) {
-      console.warn('[Cloak] Popup blocked or window closed');
-      return;
-    }
+  // ─── Tab Cloak: shared window wiring (manual launch + auto-cloak spawn) ───
+  // Escape hatch + iframe + title/favicon injection for an already-opened
+  // cloak window.
+  const cloakWindow = useCallback((w: Window) => {
+    const cloakTitle = resolveCloakTitle(customTitle);
 
     // Escape hatch: Escape closes the cloaked tab and returns focus to the
     // original Cloud Browser tab.
@@ -410,7 +411,27 @@ export default function App() {
     } else {
       w.addEventListener('load', applyCloak, { once: true });
     }
-  }, [launchMethod, customTitle, customFavicon]);
+  }, [customTitle, customFavicon]);
+
+  // ─── Tab Cloak: launch a cloaked tab ─────────────────────────────────────
+  const launchCloak = useCallback(() => {
+    let w;
+    if (launchMethod === 'blob:') {
+      const html = `<!DOCTYPE html><html><head><title>${resolveCloakTitle(customTitle)}</title></head><body></body></html>`;
+      const blob = new Blob([html], { type: 'text/html' });
+      const blobUrl = URL.createObjectURL(blob);
+      w = window.open(blobUrl, '_blank');
+    } else {
+      w = window.open('about:blank', '_blank');
+    }
+
+    if (!w || w.closed) {
+      console.warn('[Cloak] Popup blocked or window closed');
+      return;
+    }
+
+    cloakWindow(w);
+  }, [launchMethod, customTitle, cloakWindow]);
 
   const handleStart = useCallback(async () => {
     setUrlInput('');
@@ -422,36 +443,85 @@ export default function App() {
     await api.start(selectedBrowser);
   }, [api, selectedBrowser]);
 
-  // Auto-cloak on first user input: if Auto-Cloak is enabled in localStorage,
-  // launch a cloaked tab on the first click/keydown/touchstart anywhere on the
-  // page. Fires once, then removes the listeners.
+  // ─── Tab Cloak: proxy-style auto-cloak on load ───────────────────────────
+  // An anchor navigation is treated as user-initiated more liberally than
+  // window.open, so on load we open a NAMED about:blank window via a hidden
+  // anchor; window.open with the same target name then recovers a reference to
+  // that already-open window (popup blockers only block CREATING windows, not
+  // reusing existing ones), letting the cloak title/favicon/iframe injection
+  // run. If the browser blocks the spawn anyway, fall back to firing
+  // launchCloak on the first click/keydown/touchstart.
   const autoCloakInput = useRef(false);
+  const autoCloakSpawnTried = useRef(false);
   useEffect(() => {
-    const handleFirstInput = () => {
-      if (autoCloakInput.current) return;
-      let enabled = false;
+    // Never spawn from inside the cloaked tab's own iframe (the cloak window
+    // hosts an iframe of this app) — otherwise every cloak would nest another.
+    if (window.self !== window.top) return;
+
+    const isAutoCloakEnabled = () => {
       try {
-        enabled = localStorage.getItem('cloak_autoCloakEnabled') === 'true';
+        return localStorage.getItem('cloak_autoCloakEnabled') === 'true';
       } catch {
-        enabled = false;
-      }
-      if (enabled) {
-        autoCloakInput.current = true;
-        launchCloak();
-        document.removeEventListener('click', handleFirstInput);
-        document.removeEventListener('keydown', handleFirstInput);
-        document.removeEventListener('touchstart', handleFirstInput);
+        return false;
       }
     };
-    document.addEventListener('click', handleFirstInput);
-    document.addEventListener('keydown', handleFirstInput);
-    document.addEventListener('touchstart', handleFirstInput);
-    return () => {
+
+    // Proxy-style attempt: spawn the cloaked tab immediately on load (once).
+    if (!autoCloakSpawnTried.current && isAutoCloakEnabled()) {
+      autoCloakSpawnTried.current = true;
+      const a = document.createElement('a');
+      a.href = 'about:blank';
+      a.target = CLOAK_WINDOW_NAME;
+      a.rel = 'opener';
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      const w = window.open('about:blank', CLOAK_WINDOW_NAME);
+      if (w && !w.closed) {
+        console.log('[Cloak] Proxy-style spawn succeeded on load');
+        autoCloakInput.current = true;
+        cloakWindow(w);
+      } else {
+        console.log('[Cloak] On-load spawn blocked; waiting for first input');
+      }
+    }
+
+    // Fallback: wait for the first click/keydown/touchstart anywhere on the
+    // page. Fires once, then removes the listeners.
+    const handleFirstInput = () => {
+      if (autoCloakInput.current) return;
+      if (!isAutoCloakEnabled()) return;
+      autoCloakInput.current = true;
+      launchCloak();
+      cleanup();
+    };
+    const cleanup = () => {
       document.removeEventListener('click', handleFirstInput);
       document.removeEventListener('keydown', handleFirstInput);
       document.removeEventListener('touchstart', handleFirstInput);
     };
-  }, [launchCloak]);
+    document.addEventListener('click', handleFirstInput);
+    document.addEventListener('keydown', handleFirstInput);
+    document.addEventListener('touchstart', handleFirstInput);
+    return cleanup;
+  }, [launchCloak, cloakWindow]);
+
+  // ─── Anti-Close Protection ───────────────────────────────────────────────
+  // While enabled, closing the tab triggers the browser's native confirmation
+  // dialog. The listener is attached only while the toggle is on and removed
+  // on toggle-off and on unmount via the effect cleanup.
+  useEffect(() => {
+    if (!antiCloseEnabled) return;
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = ''; // Triggers the browser's native confirmation dialog
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [antiCloseEnabled]);
 
   const handleStop = useCallback(async () => {
     await api.stop();
@@ -910,6 +980,18 @@ export default function App() {
                   type="checkbox"
                   checked={autoCloakEnabled}
                   onChange={e => setAutoCloakEnabled(e.target.checked)}
+                  className="accent-primary"
+                />
+                <span>On / Off</span>
+              </label>
+            </div>
+            <div className="flex justify-between text-xs mb-2" style={{ color: 'var(--muted)' }}>
+              <span>Anti-Close Protection</span>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={antiCloseEnabled}
+                  onChange={e => setAntiCloseEnabled(e.target.checked)}
                   className="accent-primary"
                 />
                 <span>On / Off</span>
