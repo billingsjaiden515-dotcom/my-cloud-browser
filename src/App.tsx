@@ -511,8 +511,34 @@ export default function App() {
     // Proxy-style attempt: spawn the cloaked tab immediately on load (once).
     if (!autoCloakSpawnTried.current && isAutoCloakEnabled()) {
       autoCloakSpawnTried.current = true;
+
+      // Respect the Launch Method setting: blob: seeds the spawned window with
+      // the same HTML template the manual button uses; about:blank keeps the
+      // original behavior. (saveCloakState writes JSON, so accept both the
+      // JSON-quoted and the raw form of the stored value.)
+      let spawnHref: string = 'about:blank';
+      let storedMethod: unknown = null;
+      try {
+        const raw = localStorage.getItem('cloak_launchMethod');
+        if (raw !== null) {
+          try {
+            storedMethod = JSON.parse(raw);
+          } catch {
+            storedMethod = raw;
+          }
+        }
+      } catch {
+        storedMethod = null;
+      }
+      if (storedMethod === 'blob:') {
+        const matched = CLOAK_PRESETS.find(p => p.label === customTitle);
+        const finalTitle = matched ? matched.title : customTitle;
+        const html = `<!DOCTYPE html><html><head><title>${finalTitle || 'Cloud Browser'}</title></head><body></body></html>`;
+        spawnHref = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+      }
+
       const a = document.createElement('a');
-      a.href = 'about:blank';
+      a.href = spawnHref;
       a.target = CLOAK_WINDOW_NAME;
       a.rel = 'opener';
       a.style.display = 'none';
