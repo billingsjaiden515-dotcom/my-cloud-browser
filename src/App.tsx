@@ -227,6 +227,12 @@ export default function App() {
     audio: '—',
   });
 
+  /** Live inbound-rtp (video) stats from RTCPeerConnection.getStats(). */
+  const [rtpStats, setRtpStats] = useState<{ fps: number | null; bitrateKbps: number | null }>({
+    fps: null,
+    bitrateKbps: null,
+  });
+
   // ─── Stream Settings (Target FPS) ──────────────────────────────────────────
   // Persisted under stream_fps (default 30) and POSTed to the backend on mount
   // and on every change, so the wiring is ready for the H.264 pipeline rewrite.
@@ -695,6 +701,47 @@ export default function App() {
     };
   }, [showSettings, settingsTab, pcRef]);
 
+  // Live WebRTC stats for Telemetry -> Stats: video FPS + bitrate computed
+  // from the per-second bytesReceived delta. Runs ONLY while that sub-tab is
+  // open (1s interval).
+  useEffect(() => {
+    if (!showSettings || settingsTab !== 'telemetry' || telemetryTab !== 'stats') return;
+    let prevBytes: number | null = null;
+    let cancelled = false;
+    const tick = async () => {
+      const pc = pcRef.current;
+      if (!pc) return;
+      try {
+        const report = await pc.getStats();
+        const found: { fps: number | null; bytes: number | null } = { fps: null, bytes: null };
+        report.forEach((stat) => {
+          const s = stat as { type?: string; kind?: string; framesPerSecond?: number; bytesReceived?: number };
+          if (s.type === 'inbound-rtp' && s.kind === 'video' && typeof s.bytesReceived === 'number') {
+            found.bytes = s.bytesReceived;
+            if (typeof s.framesPerSecond === 'number') found.fps = s.framesPerSecond;
+          }
+        });
+        if (cancelled || found.bytes === null) return;
+        if (prevBytes !== null && found.bytes >= prevBytes) {
+          const kbps = Math.round(((found.bytes - prevBytes) * 8) / 1000);
+          setRtpStats({ fps: found.fps, bitrateKbps: kbps });
+        } else if (found.fps !== null) {
+          // First sample (or counter reset): prime FPS, wait a tick for bitrate.
+          setRtpStats(prev => ({ ...prev, fps: found.fps }));
+        }
+        prevBytes = found.bytes;
+      } catch {
+        // getStats() unavailable — keep the last values.
+      }
+    };
+    void tick();
+    const id = setInterval(() => void tick(), 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [showSettings, settingsTab, telemetryTab, pcRef]);
+
   const handleStop = useCallback(async () => {
     await api.stop();
     setUrlInput('');
@@ -920,53 +967,59 @@ export default function App() {
         </div>
       )}
 
-      {/* Settings panel */}
+      {/* Settings panel — full-screen glass modal */}
       {showSettings && !immersive && (
         <div
-          className="absolute right-3 z-40 rounded-xl border shadow-2xl p-4 w-64 animate-fadein"
-          style={{
-            top: immersive ? '8px' : '60px',
-            background: 'var(--surface)',
-            borderColor: 'var(--border)',
-          }}
+          className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4"
+          onClick={() => setShowSettings(false)}
         >
-          <button
-            onClick={() => setShowSettings(false)}
-            className="absolute top-3 right-3"
-            style={{ color: 'var(--muted)' }}
+          <div
+            className="relative w-full max-w-5xl h-[80vh] backdrop-blur-xl bg-slate-900/80 border border-white/10 rounded-2xl shadow-2xl flex overflow-hidden"
+            onClick={e => e.stopPropagation()}
           >
-            <X className="w-4 h-4" />
-          </button>
-          <div className="flex gap-1 mb-3">
+            {/* Large close button (top right) */}
             <button
-              onClick={() => setSettingsTab('appearance')}
-              className={`flex-1 px-2 py-1.5 text-xs rounded-lg border transition-colors ${settingsTab === 'appearance' ? 'bg-primary border-primary' : 'border-transparent text-muted hover:bg-surface-2'}`}
-              style={{ color: settingsTab === 'appearance' ? 'var(--primary-text)' : 'var(--muted)' }}
+              onClick={() => setShowSettings(false)}
+              aria-label="Close settings"
+              className="absolute top-4 right-4 z-10 p-2 rounded-lg bg-slate-900/70 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
             >
-              Appearance
+              <X className="w-6 h-6" />
             </button>
-            <button
-              onClick={() => setSettingsTab('audio')}
-              className={`flex-1 px-2 py-1.5 text-xs rounded-lg border transition-colors ${settingsTab === 'audio' ? 'bg-primary border-primary' : 'border-transparent text-muted hover:bg-surface-2'}`}
-              style={{ color: settingsTab === 'audio' ? 'var(--primary-text)' : 'var(--muted)' }}
-            >
-              <Volume2 className="w-3 h-3 mr-1" /> Audio
-            </button>
-            <button
-              onClick={() => setSettingsTab('cloaking')}
-              className={`flex-1 px-2 py-1.5 text-xs rounded-lg border transition-colors ${settingsTab === 'cloaking' ? 'bg-primary border-primary' : 'border-transparent text-muted hover:bg-surface-2'}`}
-              style={{ color: settingsTab === 'cloaking' ? 'var(--primary-text)' : 'var(--muted)' }}
-            >
-              <Globe className="w-3 h-3 mr-1" /> Cloaking
-            </button>
-            <button
-              onClick={() => setSettingsTab('telemetry')}
-              className={`flex-1 px-2 py-1.5 text-xs rounded-lg border transition-colors ${settingsTab === 'telemetry' ? 'bg-primary border-primary' : 'border-transparent text-muted hover:bg-surface-2'}`}
-              style={{ color: settingsTab === 'telemetry' ? 'var(--primary-text)' : 'var(--muted)' }}
-            >
-              <Activity className="w-3 h-3 mr-1" /> Telemetry
-            </button>
-          </div>
+
+            {/* Sidebar */}
+            <aside className="w-[200px] shrink-0 border-r border-white/10 p-4 flex flex-col gap-2 bg-white/5">
+              <button
+                onClick={() => setSettingsTab('appearance')}
+                className={`w-full flex items-center gap-2 px-3 py-2 text-sm rounded-lg border transition-colors text-left ${settingsTab === 'appearance' ? 'bg-primary border-primary' : 'border-transparent hover:bg-white/10'}`}
+                style={{ color: settingsTab === 'appearance' ? 'var(--primary-text)' : 'var(--muted)' }}
+              >
+                <Sun className="w-4 h-4" /> Appearance
+              </button>
+              <button
+                onClick={() => setSettingsTab('audio')}
+                className={`w-full flex items-center gap-2 px-3 py-2 text-sm rounded-lg border transition-colors text-left ${settingsTab === 'audio' ? 'bg-primary border-primary' : 'border-transparent hover:bg-white/10'}`}
+                style={{ color: settingsTab === 'audio' ? 'var(--primary-text)' : 'var(--muted)' }}
+              >
+                <Volume2 className="w-4 h-4" /> Audio
+              </button>
+              <button
+                onClick={() => setSettingsTab('cloaking')}
+                className={`w-full flex items-center gap-2 px-3 py-2 text-sm rounded-lg border transition-colors text-left ${settingsTab === 'cloaking' ? 'bg-primary border-primary' : 'border-transparent hover:bg-white/10'}`}
+                style={{ color: settingsTab === 'cloaking' ? 'var(--primary-text)' : 'var(--muted)' }}
+              >
+                <Globe className="w-4 h-4" /> Cloaking
+              </button>
+              <button
+                onClick={() => setSettingsTab('telemetry')}
+                className={`w-full flex items-center gap-2 px-3 py-2 text-sm rounded-lg border transition-colors text-left ${settingsTab === 'telemetry' ? 'bg-primary border-primary' : 'border-transparent hover:bg-white/10'}`}
+                style={{ color: settingsTab === 'telemetry' ? 'var(--primary-text)' : 'var(--muted)' }}
+              >
+                <Activity className="w-4 h-4" /> Telemetry
+              </button>
+            </aside>
+
+            {/* Scrollable content area */}
+            <main className="flex-1 min-w-0 overflow-y-auto p-6 pr-14">
           <div className="space-y-1" style={{ display: settingsTab === 'appearance' ? 'block' : 'none' }}>
             {THEMES.map(t => (
               <button
@@ -1375,11 +1428,11 @@ export default function App() {
                 </div>
                 <div className="flex justify-between text-xs">
                   <span style={{ color: 'var(--muted)' }}>Bitrate</span>
-                  <span>— (WebRTC getStats() pending)</span>
+                  <span>{rtpStats.bitrateKbps !== null ? `${rtpStats.bitrateKbps} kbps` : '—'}</span>
                 </div>
                 <div className="flex justify-between text-xs">
                   <span style={{ color: 'var(--muted)' }}>FPS</span>
-                  <span>— (WebRTC getStats() pending)</span>
+                  <span>{rtpStats.fps !== null ? `${rtpStats.fps}` : '—'}</span>
                 </div>
               </>
             ) : (
@@ -1389,7 +1442,9 @@ export default function App() {
             )}
           </div>
         </div>
-      </div>
+            </main>
+          </div>
+        </div>
     )}
 
       {/* ─── Viewport ─────────────────────────────────────────────────────────── */}
@@ -1405,6 +1460,8 @@ export default function App() {
           volume={audioSettings.volume}
           bass={audioSettings.bass}
           treble={audioSettings.treble}
+          isConnecting={isConnecting}
+          selectedBrowser={selectedBrowser}
         />
       </div>
 

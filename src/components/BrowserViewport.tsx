@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RemoteBrowserApi, ConnectionState } from '@/hooks/useRemoteBrowser';
+import { motion, AnimatePresence } from 'framer-motion';
 
 interface BrowserViewportProps {
   api: RemoteBrowserApi;
@@ -12,6 +13,10 @@ interface BrowserViewportProps {
   bass: number;
   /** Treble shelf gain in dB (-12..12). */
   treble: number;
+  /** True from the Start click until the stream connects — drives the launch pad. */
+  isConnecting: boolean;
+  /** Browser chosen in the header dropdown — shown in the launch messages. */
+  selectedBrowser: string;
 }
 
 // Keys that need to be prevented from triggering browser shortcuts
@@ -34,9 +39,31 @@ const KEY_MAP: Record<string, string> = {
 // Track which modifiers are currently held down
 const MODIFIER_KEYS = new Set(['Control', 'Shift', 'Alt', 'Meta']);
 
-export function BrowserViewport({ api, connectionState, videoRef, immersive, volume, bass, treble }: BrowserViewportProps) {
+// Launch-pad status lines cycled every 800ms while the session starts.
+const buildLaunchSteps = (browser: string): string[] => [
+  'Initializing Xvfb :99...',
+  'Starting PulseAudio...',
+  `Launching ${browser}...`,
+  'Connecting to x11grab...',
+  'Encoding to VP8...',
+  'Gathering ICE candidates...',
+  'Establishing WebRTC stream...',
+];
+
+export function BrowserViewport({ api, connectionState, videoRef, immersive, volume, bass, treble, isConnecting, selectedBrowser }: BrowserViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const isConnected = connectionState === 'connected';
+  // Rocket launch pad: cycles a status step every 800ms while connecting.
+  const [launchStep, setLaunchStep] = useState(0);
+  const launchSteps = buildLaunchSteps(selectedBrowser);
+  useEffect(() => {
+    if (!isConnecting) {
+      setLaunchStep(0);
+      return;
+    }
+    const id = setInterval(() => setLaunchStep(s => (s + 1) % launchSteps.length), 800);
+    return () => clearInterval(id);
+  }, [isConnecting, selectedBrowser, launchSteps.length]);
   // Track drag state: which button is currently held down
   const dragRef = useRef<{ button: 'left' | 'right' | 'middle' } | null>(null);
   // Track actual viewport dimensions (not video element dimensions which may be 0 for WebRTC)
@@ -315,11 +342,14 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
       onKeyDown={handleKeyDown}
       onKeyUp={handleKeyUp}
     >
-      <video
+      <motion.video
         ref={videoRef}
         autoPlay
         playsInline
         className="cursor-default select-none"
+        initial={{ y: 150, opacity: 0 }}
+        animate={isConnected ? { y: 0, opacity: 1 } : { y: 150, opacity: 0 }}
+        transition={{ duration: 0.5, ease: 'easeOut' }}
         style={{
           display: isConnected ? 'block' : 'none',
           // Fill the container completely — no letterbox bars. Uniform scale
@@ -338,19 +368,47 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
         onContextMenu={handleContextMenu}
       />
 
+      {/* Rocket launch pad — shown while connecting; shoots up when the stream connects */}
+      <AnimatePresence>
+        {isConnecting && (
+          <motion.div
+            key="rocket-launch-pad"
+            className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-6 pointer-events-none"
+            exit={{ y: -1000, opacity: 0 }}
+            transition={{ duration: 0.6, ease: 'easeIn' }}
+          >
+            <div className="relative flex flex-col items-center">
+              <motion.div
+                className="text-6xl leading-none select-none"
+                animate={{ y: [0, -2, 2, -2, 2, 0] }}
+                transition={{ repeat: Infinity, duration: 0.2 }}
+              >
+                🚀
+              </motion.div>
+              {/* Smoke puffs rising from the pad */}
+              <div className="relative h-4 w-44">
+                {[0, 1, 2].map(i => (
+                  <motion.div
+                    key={i}
+                    className="absolute top-0 h-5 w-5 rounded-full bg-white/30"
+                    style={{ left: `${20 + i * 30}%` }}
+                    animate={{ scale: [0.3, 2.2], opacity: [0.7, 0] }}
+                    transition={{ repeat: Infinity, duration: 1.4, delay: i * 0.35, ease: 'easeOut' }}
+                  />
+                ))}
+              </div>
+              {/* Launch pad */}
+              <div className="h-3 w-44 rounded-full bg-gray-600 shadow-lg" />
+            </div>
+            <p className="font-mono text-green-400 text-sm text-center px-8">{launchSteps[launchStep]}</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Overlay for non-connected states */}
       {!isConnected && (
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="text-center space-y-4 px-8">
-            {connectionState === 'connecting' && (
-              <>
-                <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/10 mb-2">
-                  <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                </div>
-                <p className="text-muted font-medium">Launching remote browser…</p>
-                <p className="text-xs text-muted/60">Establishing WebRTC connection</p>
-              </>
-            )}
             {connectionState === 'disconnected' && (
               <>
                 <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-surface mb-2">
