@@ -414,15 +414,22 @@ export default function App() {
   }, [customTitle, customFavicon]);
 
   // ─── Tab Cloak: launch a cloaked tab ─────────────────────────────────────
-  const launchCloak = useCallback(() => {
-    let w;
-    if (launchMethod === 'blob:') {
-      const html = `<!DOCTYPE html><html><head><title>${resolveCloakTitle(customTitle)}</title></head><body></body></html>`;
-      const blob = new Blob([html], { type: 'text/html' });
-      const blobUrl = URL.createObjectURL(blob);
-      w = window.open(blobUrl, '_blank');
-    } else {
-      w = window.open('about:blank', '_blank');
+  // Single source of truth for opening + injecting a cloak window. The manual
+  // button and the first-input fallback call it with no argument so it opens
+  // the window itself; the on-load auto-cloak passes the window it already
+  // grabbed via the named-target anchor trick so BOTH paths run this exact
+  // same injection logic.
+  const launchCloak = useCallback((existingWindow?: Window | null) => {
+    let w: Window | null = existingWindow ?? null;
+    if (!w) {
+      if (launchMethod === 'blob:') {
+        const html = `<!DOCTYPE html><html><head><title>${resolveCloakTitle(customTitle)}</title></head><body></body></html>`;
+        const blob = new Blob([html], { type: 'text/html' });
+        const blobUrl = URL.createObjectURL(blob);
+        w = window.open(blobUrl, '_blank');
+      } else {
+        w = window.open('about:blank', '_blank');
+      }
     }
 
     if (!w || w.closed) {
@@ -477,11 +484,17 @@ export default function App() {
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      const w = window.open('about:blank', CLOAK_WINDOW_NAME);
+      // Grab the window the anchor opened. An EMPTY url means "return the
+      // existing window WITHOUT navigating it" — passing 'about:blank' here
+      // triggers a second navigation that replaces the document we are about to
+      // inject into, leaving a blank tab. Then run the exact same launchCloak()
+      // the manual button uses, handing it the captured reference so the
+      // title/favicon/iframe injection is identical.
+      const w = window.open('', CLOAK_WINDOW_NAME);
       if (w && !w.closed) {
         console.log('[Cloak] Proxy-style spawn succeeded on load');
         autoCloakInput.current = true;
-        cloakWindow(w);
+        launchCloak(w);
       } else {
         console.log('[Cloak] On-load spawn blocked; waiting for first input');
       }
@@ -505,7 +518,7 @@ export default function App() {
     document.addEventListener('keydown', handleFirstInput);
     document.addEventListener('touchstart', handleFirstInput);
     return cleanup;
-  }, [launchCloak, cloakWindow]);
+  }, [launchCloak]);
 
   // ─── Anti-Close Protection ───────────────────────────────────────────────
   // While enabled, closing the tab triggers the browser's native confirmation
@@ -1025,7 +1038,7 @@ export default function App() {
               />
             </div>
             <button
-              onClick={launchCloak}
+              onClick={() => launchCloak()}
               className="w-full px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors"
               style={{
                 background: 'var(--primary)',
