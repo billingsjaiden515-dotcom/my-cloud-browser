@@ -167,19 +167,43 @@ export default function App() {
   const [antiCloseEnabled, setAntiCloseEnabled] = useState<boolean>(() =>
     loadCloakState('cloak_antiCloseEnabled', false)
   );
+  const [redirectMainTab, setRedirectMainTab] = useState(() => localStorage.getItem('cloak_redirectMainTab') === 'true');
   const [launchMethod, setLaunchMethod] = useState<'about:blank' | 'blob:'>(
     () => loadCloakState('cloak_launchMethod', 'about:blank')
   );
-  const [cloakTargetUrl, setCloakTargetUrl] = useState<string>(() =>
-    loadCloakState('cloak_targetUrl', 'https://google.com')
-  );
+  // The target URL is stored RAW (localStorage.setItem, not JSON) so the
+  // on-load redirect can read it directly with getItem(); accept both the raw
+  // format and the legacy JSON-quoted value written by saveCloakState.
+  const [cloakTargetUrl, setCloakTargetUrl] = useState<string>(() => {
+    let raw: string | null = null;
+    try {
+      raw = localStorage.getItem('cloak_targetUrl');
+    } catch {
+      raw = null;
+    }
+    if (!raw) return 'https://google.com';
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      return typeof parsed === 'string' ? parsed || 'https://google.com' : raw;
+    } catch {
+      return raw; // raw (non-JSON) format written directly by the input
+    }
+  });
 
   useEffect(() => { saveCloakState('cloak_customTitle', customTitle); }, [customTitle]);
   useEffect(() => { saveCloakState('cloak_customFavicon', customFavicon); }, [customFavicon]);
   useEffect(() => { saveCloakState('cloak_autoCloakEnabled', autoCloakEnabled); }, [autoCloakEnabled]);
   useEffect(() => { saveCloakState('cloak_antiCloseEnabled', antiCloseEnabled); }, [antiCloseEnabled]);
   useEffect(() => { saveCloakState('cloak_launchMethod', launchMethod); }, [launchMethod]);
-  useEffect(() => { saveCloakState('cloak_targetUrl', cloakTargetUrl); }, [cloakTargetUrl]);
+  // Raw (non-JSON) write: the on-load redirect reads this key with a plain
+  // getItem(), so the value must be the bare URL, not a JSON-quoted string.
+  useEffect(() => {
+    try {
+      localStorage.setItem('cloak_targetUrl', cloakTargetUrl);
+    } catch {
+      // localStorage unavailable or quota exceeded — silently ignore.
+    }
+  }, [cloakTargetUrl]);
 
   const [settingsTab, setSettingsTab] = useState<'appearance' | 'audio' | 'cloaking'>('appearance');
 
@@ -506,6 +530,15 @@ export default function App() {
         console.log('[Cloak] Proxy-style spawn succeeded on load');
         autoCloakInput.current = true;
         launchCloak(w);
+        const isRedirectEnabled = localStorage.getItem('cloak_redirectMainTab') === 'true';
+        const targetUrl = localStorage.getItem('cloak_targetUrl') || 'https://google.com';
+
+        if (isRedirectEnabled) {
+          // Slight delay ensures the new cloaked window grabs focus before the main tab navigates away
+          setTimeout(() => {
+            window.location.replace(targetUrl);
+          }, 100);
+        }
       } else {
         console.log('[Cloak] On-load spawn blocked; waiting for first input');
       }
@@ -1016,6 +1049,22 @@ export default function App() {
                   type="checkbox"
                   checked={antiCloseEnabled}
                   onChange={e => setAntiCloseEnabled(e.target.checked)}
+                  className="accent-primary"
+                />
+                <span>On / Off</span>
+              </label>
+            </div>
+            <div className="flex justify-between text-xs mb-2" style={{ color: 'var(--muted)' }}>
+              <span>Auto Redirect Tab</span>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={redirectMainTab}
+                  onChange={e => {
+                    const next = e.target.checked;
+                    setRedirectMainTab(next);
+                    localStorage.setItem('cloak_redirectMainTab', String(next));
+                  }}
                   className="accent-primary"
                 />
                 <span>On / Off</span>
