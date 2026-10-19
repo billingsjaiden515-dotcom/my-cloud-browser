@@ -256,9 +256,19 @@ export default function App() {
     setFaviconVersion((v) => v + 1);
   }, [activeBrowser, isConnected]);
 
+  // Main tab title follows the Custom Tab Title value: preset clicks store the
+  // preset's long title, manual edits store the typed text, and clearing it
+  // falls back to "Cloud Browser". Declared BEFORE the favicon effect below so
+  // the connected-state browser label it applies in its default branch stays
+  // authoritative when no custom title is set.
+  useEffect(() => {
+    document.title = customTitle || 'Cloud Browser';
+  }, [customTitle]);
+
   useEffect(() => {
     // Tab Cloak overrides: custom title/favicon take precedence over the
     // default browser auto-logic. When both are empty, fall back to default.
+    // (The main tab title is owned by the dedicated customTitle effect above.)
     if (customTitle || customFavicon) {
       let link = document.querySelector<HTMLLinkElement>('link[rel~="icon"]');
       if (!link) {
@@ -266,7 +276,6 @@ export default function App() {
         link.rel = 'icon';
         document.head.appendChild(link);
       }
-      document.title = customTitle || 'Cloud Browser';
       if (customFavicon) {
         link.type = 'image/png';
         link.href = customFavicon;
@@ -343,9 +352,11 @@ export default function App() {
 
   // ─── Tab Cloak: preset application + reset ───────────────────────────────
   const applyPreset = useCallback((p: { label: string; title: string; favicon: string }) => {
-    // Populate the input with the preset's short label ("Gmail", "HTMW", ...);
-    // launchCloak maps it back to the preset's long title for the cloaked tab.
-    setCustomTitle(p.label);
+    // Populate the input with the preset's LONG title. The grid tiles keep the
+    // short label; this value drives the Custom Tab Title input, the main
+    // tab's document.title, and — via cloakWindow's lookup falling through to
+    // the stored value — the cloaked tab's title.
+    setCustomTitle(p.title);
     setCustomFavicon(p.favicon);
   }, []);
 
