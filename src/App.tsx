@@ -2,6 +2,7 @@ import { useRef, useState, useCallback, useEffect } from 'react';
 import {
   Play, Square, X, Maximize2, Minimize2, Settings, Sun, Moon,
   Monitor, Eye, EyeOff, AlertCircle, Globe, Loader2, Volume2, SlidersHorizontal,
+  Activity,
 } from 'lucide-react';
 import { useRemoteBrowser } from '@/hooks/useRemoteBrowser';
 import { BrowserViewport } from '@/components/BrowserViewport';
@@ -51,6 +52,14 @@ const AUDIO_BITRATE: Record<'low' | 'medium' | 'high', number> = {
   medium: 64000,
   high: 128000,
 };
+
+/** GET /api/system-stats response (backend os-module snapshot). */
+interface SystemStats {
+  cpuLoad: number[]; // os.loadavg(): [1m, 5m, 15m]
+  cores: number;
+  totalMemMB: number;
+  freeMemMB: number;
+}
 
 // Tab Cloaking presets: clickable tiles that pre-fill the Title / Favicon inputs.
 const CLOAK_PRESETS: { label: string; title: string; favicon: string }[] = [
@@ -205,7 +214,15 @@ export default function App() {
     }
   }, [cloakTargetUrl]);
 
-  const [settingsTab, setSettingsTab] = useState<'appearance' | 'audio' | 'cloaking'>('appearance');
+  const [settingsTab, setSettingsTab] = useState<'appearance' | 'audio' | 'cloaking' | 'telemetry'>('appearance');
+  const [telemetryTab, setTelemetryTab] = useState<'debug' | 'specs' | 'stats'>('debug');
+  const [systemStats, setSystemStats] = useState<SystemStats | null>(null);
+  const [webrtcDebug, setWebrtcDebug] = useState<{ signaling: string; ice: string; conn: string; audio: string }>({
+    signaling: '—',
+    ice: '—',
+    conn: '—',
+    audio: '—',
+  });
 
   const [selectedBrowser, setSelectedBrowser] = useState('chromium');
   // Which browser the CURRENT session actually launched. Tracked separately
@@ -214,7 +231,7 @@ export default function App() {
   // favicon/title must describe what is running, not what is highlighted.
   const [runningBrowser, setRunningBrowser] = useState<string | null>(null);
 
-  const { connectionState, error, currentUrl, currentTitle, availableBrowsers, setAudioBitrate } = api;
+  const { connectionState, error, currentUrl, currentTitle, availableBrowsers, setAudioBitrate, pcRef } = api;
   const isConnected = connectionState === 'connected';
   const isConnecting = connectionState === 'connecting';
   const isBusy = isConnecting;
@@ -606,6 +623,47 @@ export default function App() {
     };
   }, [antiCloseEnabled]);
 
+  // ─── Telemetry ─────────────────────────────────────────────────────────────
+  // Poll /api/system-stats every 5s and refresh the local WebRTC snapshot
+  // every 1s — ONLY while the Telemetry settings tab is open. Switching away
+  // (or closing Settings) tears both intervals down.
+  useEffect(() => {
+    if (!showSettings || settingsTab !== 'telemetry') return;
+
+    let cancelled = false;
+    const pollStats = async () => {
+      try {
+        const r = await fetch('/api/system-stats');
+        if (!r.ok || cancelled) return;
+        const d = (await r.json()) as SystemStats;
+        if (!cancelled) setSystemStats(d);
+      } catch {
+        // Backend unreachable — keep the last snapshot.
+      }
+    };
+    pollStats();
+    const statsId = setInterval(pollStats, 5000);
+
+    const readWebRTC = () => {
+      const pc = pcRef.current;
+      const audioTrack = pc?.getReceivers().find(r => r.track?.kind === 'audio')?.track ?? null;
+      setWebrtcDebug({
+        signaling: pc?.signalingState ?? '—',
+        ice: pc?.iceConnectionState ?? '—',
+        conn: pc?.connectionState ?? '—',
+        audio: audioTrack ? audioTrack.readyState : pc ? 'no audio track' : '—',
+      });
+    };
+    readWebRTC();
+    const webrtcId = setInterval(readWebRTC, 1000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(statsId);
+      clearInterval(webrtcId);
+    };
+  }, [showSettings, settingsTab, pcRef]);
+
   const handleStop = useCallback(async () => {
     await api.stop();
     setUrlInput('');
@@ -869,6 +927,13 @@ export default function App() {
               style={{ color: settingsTab === 'cloaking' ? 'var(--primary-text)' : 'var(--muted)' }}
             >
               <Globe className="w-3 h-3 mr-1" /> Cloaking
+            </button>
+            <button
+              onClick={() => setSettingsTab('telemetry')}
+              className={`flex-1 px-2 py-1.5 text-xs rounded-lg border transition-colors ${settingsTab === 'telemetry' ? 'bg-primary border-primary' : 'border-transparent text-muted hover:bg-surface-2'}`}
+              style={{ color: settingsTab === 'telemetry' ? 'var(--primary-text)' : 'var(--muted)' }}
+            >
+              <Activity className="w-3 h-3 mr-1" /> Telemetry
             </button>
           </div>
           <div className="space-y-1" style={{ display: settingsTab === 'appearance' ? 'block' : 'none' }}>
@@ -1140,6 +1205,133 @@ export default function App() {
             >
               Launch Cloaked Tab
             </button>
+          </div>
+        </div>
+        {/* ─── Telemetry panel ─── */}
+        <div className="space-y-3" style={{ display: settingsTab === 'telemetry' ? 'block' : 'none' }}>
+          {/* Sub-tabs: Debug | Specs | Stats */}
+          <div className="flex gap-1">
+            <button
+              onClick={() => setTelemetryTab('debug')}
+              className={`flex-1 px-2 py-1 text-[11px] rounded-lg border transition-colors ${telemetryTab === 'debug' ? 'bg-primary border-primary' : 'border-transparent text-muted hover:bg-surface-2'}`}
+              style={{ color: telemetryTab === 'debug' ? 'var(--primary-text)' : 'var(--muted)' }}
+            >
+              Debug
+            </button>
+            <button
+              onClick={() => setTelemetryTab('specs')}
+              className={`flex-1 px-2 py-1 text-[11px] rounded-lg border transition-colors ${telemetryTab === 'specs' ? 'bg-primary border-primary' : 'border-transparent text-muted hover:bg-surface-2'}`}
+              style={{ color: telemetryTab === 'specs' ? 'var(--primary-text)' : 'var(--muted)' }}
+            >
+              Specs
+            </button>
+            <button
+              onClick={() => setTelemetryTab('stats')}
+              className={`flex-1 px-2 py-1 text-[11px] rounded-lg border transition-colors ${telemetryTab === 'stats' ? 'bg-primary border-primary' : 'border-transparent text-muted hover:bg-surface-2'}`}
+              style={{ color: telemetryTab === 'stats' ? 'var(--primary-text)' : 'var(--muted)' }}
+            >
+              Stats
+            </button>
+          </div>
+
+          {/* Debug: live WebRTC + audio state from the existing RTCPeerConnection */}
+          <div className="space-y-2" style={{ display: telemetryTab === 'debug' ? 'block' : 'none' }}>
+            <div className="flex justify-between text-xs">
+              <span style={{ color: 'var(--muted)' }}>Session</span>
+              <span>{connectionState}</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span style={{ color: 'var(--muted)' }}>Signaling State</span>
+              <span>{webrtcDebug.signaling}</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span style={{ color: 'var(--muted)' }}>ICE Connection</span>
+              <span>{webrtcDebug.ice}</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span style={{ color: 'var(--muted)' }}>Peer Connection</span>
+              <span>{webrtcDebug.conn}</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span style={{ color: 'var(--muted)' }}>Audio</span>
+              <span>{webrtcDebug.audio}</span>
+            </div>
+          </div>
+
+          {/* Specs: static stream/capture information */}
+          <div className="space-y-2" style={{ display: telemetryTab === 'specs' ? 'block' : 'none' }}>
+            <div className="flex justify-between text-xs gap-3">
+              <span style={{ color: 'var(--muted)' }}>Active Browser</span>
+              <span>{BROWSER_META[activeBrowser]?.label ?? activeBrowser}</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span style={{ color: 'var(--muted)' }}>Current Encoder</span>
+              <span>VP8</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span style={{ color: 'var(--muted)' }}>Resolution</span>
+              <span>1920x1080</span>
+            </div>
+            <div className="flex justify-between text-xs gap-3">
+              <span style={{ color: 'var(--muted)' }}>Capture Pipeline</span>
+              <span className="text-right" style={{ wordBreak: 'break-word' }}>
+                Puppeteer CDP screencast → VP8 encoder (werift) → WebRTC
+              </span>
+            </div>
+          </div>
+
+          {/* Stats: polled from /api/system-stats while the Telemetry tab is open */}
+          <div className="space-y-3" style={{ display: telemetryTab === 'stats' ? 'block' : 'none' }}>
+            {systemStats ? (
+              <>
+                <div>
+                  <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
+                    <span>CPU Load (1m)</span>
+                    <span>
+                      {(systemStats.cpuLoad[0] ?? 0).toFixed(2)} / {systemStats.cores} cores
+                    </span>
+                  </div>
+                  <div className="w-full h-2 rounded-full" style={{ background: 'var(--surface-2)' }}>
+                    <div
+                      className="h-2 rounded-full"
+                      style={{
+                        width: `${Math.min(100, Math.round(((systemStats.cpuLoad[0] ?? 0) / Math.max(1, systemStats.cores)) * 100))}%`,
+                        background: 'var(--primary)',
+                      }}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
+                    <span>RAM Used / Total</span>
+                    <span>
+                      {systemStats.totalMemMB - systemStats.freeMemMB} / {systemStats.totalMemMB} MB
+                    </span>
+                  </div>
+                  <div className="w-full h-2 rounded-full" style={{ background: 'var(--surface-2)' }}>
+                    <div
+                      className="h-2 rounded-full"
+                      style={{
+                        width: `${Math.min(100, Math.round(((systemStats.totalMemMB - systemStats.freeMemMB) / Math.max(1, systemStats.totalMemMB)) * 100))}%`,
+                        background: 'var(--primary)',
+                      }}
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span style={{ color: 'var(--muted)' }}>Bitrate</span>
+                  <span>— (WebRTC getStats() pending)</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span style={{ color: 'var(--muted)' }}>FPS</span>
+                  <span>— (WebRTC getStats() pending)</span>
+                </div>
+              </>
+            ) : (
+              <span className="text-xs" style={{ color: 'var(--muted)' }}>
+                Waiting for /api/system-stats…
+              </span>
+            )}
           </div>
         </div>
       </div>

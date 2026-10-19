@@ -9,6 +9,7 @@ import { getBrowserInfo } from './browser-finder.js';
 import { getConfiguredIceServers } from './webrtc-streamer.js';
 import { isTargetClosedError } from './browser-session.js';
 import http from 'http';
+import os from 'os';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // In dev (tsx), __dirname is <root>/server/ → ../dist = <root>/dist ✓
@@ -110,6 +111,17 @@ export function createServer(): { server: http.Server; sessionManager: SessionMa
 
   app.get('/api/config', (_req, res) => {
     res.json({ iceServers: getConfiguredIceServers() });
+  });
+
+  // ─── Telemetry ──────────────────────────────────────────────────────────────
+
+  app.get('/api/system-stats', (_req, res) => {
+    res.json({
+      cpuLoad: os.loadavg(), // [1m, 5m, 15m] load averages
+      cores: os.cpus().length,
+      totalMemMB: Math.round(os.totalmem() / (1024 * 1024)),
+      freeMemMB: Math.round(os.freemem() / (1024 * 1024)),
+    });
   });
 
   // ─── Navigation ───────────────────────────────────────────────────────────────

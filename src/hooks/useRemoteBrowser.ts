@@ -57,6 +57,8 @@ export interface RemoteBrowserApi {
   sendKeyPress: (key: string) => Promise<void>;
   typeText: (text: string) => Promise<void>;
   setAudioBitrate: (bps: number) => Promise<void>;
+  // Live RTCPeerConnection ref (read by the Telemetry > Debug panel).
+  pcRef: React.RefObject<RTCPeerConnection | null>;
 }
 
 export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): RemoteBrowserApi {
@@ -737,5 +739,7 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
     sendKeyPress,
     typeText,
     setAudioBitrate,
+    // Exposed for the Telemetry > Debug panel (ICE / signaling state display).
+    pcRef,
   };
 }
