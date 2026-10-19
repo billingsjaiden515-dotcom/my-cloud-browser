@@ -75,17 +75,17 @@ const CLOAK_PRESETS: { label: string; title: string; favicon: string }[] = [
     favicon: 'https://favicon.run/favicon?domain=dsisd.instructure.com&sz=48',
   },
   {
-    label: 'Login - Powered by Skyward',
+    label: 'Skyward',
     title: 'Login - Powered by Skyward',
     favicon: 'https://skyweb.dsisdtx.us/favicon.ico',
   },
   {
-    label: 'Inbox (899) - Michael.Towns@dsisdconnect.com - ...',
+    label: 'Gmail',
     title: 'Inbox (899) - Michael.Towns@dsisdconnect.com - ...',
     favicon: 'https://ssl.gstatic.com/ui/v1/icons/mail/rfr/gmail.ico',
   },
   {
-    label: 'iCEV | Content | Principles Of Business - HILL - period 03 | Key Concepts ...',
+    label: 'iCEV',
     title: 'iCEV | Content | Principles Of Business - HILL - period 03 | Key Concepts ...',
     favicon: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAyhpVFh0WE1MOmNvbS5hZG9iZS54bXAAAAAAADw/eHBhY2tldCBiZWdpbj0i77u/IiBpZD0iVzVNME1wQ2VoaUh6cmVTek5UY3prYzlkIj8+IDx4OnhtcG1ldGEgeG1sbnM6eD0iYWRvYmU6bnM6bWV0YS8iIHg6eG1wdGs9IkFkb2JlIFhNUCBDb3JlIDcuMS1jMDAwIDc5LjljY2M0ZGU5MywgMjAyMi8wMy8xNC0xNDowNzoyMiAgICAgICAgIj4gPHJkZjpSREYgeG1sbnM6cmRmPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5LzAyLzIyLXJkZi1zeW50YXgtbnMjIj4gPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9IiIgeG1sbnM6eG1wPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvIiB4bWxuczp4bXBNTT0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wL21tLyIgeG1sbnM6c3RSZWY9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9zVHlwZS9SZXNvdXJjZVJlZiMiIHhtcDpDcmVhdG9yVG9vbD0iQWRvYmUgUGhvdG9zaG9wIDIzLjMgKE1hY2ludG9zaCkiIHhtcE1NOkluc3RhbmNlSUQ9InhtcC5paWQ6NjVFM0U5MDdCODEyMTFFQ0I5NDZCNjhENUIzNTg5REUiIHhtcE1NOkRvY3VtZW50SUQ9InhtcC5kaWQ6NjVFM0U5MDhCODEyMTFFQ0I5NDZCNjhENUIzNTg5REUiPiA8eG1wTU06RGVyaXZlZEZyb20gc3RSZWY6aW5zdGFuY2VJRD0ieG1wLmlpZDo2NUUzRTkwNUI4MTIxMUVDQjk0NkI2OEQ1QjM1ODlERSIgc3RSZWY6ZG9jdW1lbnRJRD0ieG1wLmRpZDo2NUUzRTkwNkI4MTIxMUVDQjk0NkI2OEQ1QjM1ODlERSIvPiA8L3JkZjpEZXNjcmlwdGlvbj4gPC9yZGY6UkRGPiA8L3g6eG1wbWV0YT4gPD94cGFja2V0IGVuZD0iciI/PktiPBoAAAGFSURBVHja7NO/S8NAFAfwe3fXYlN/YLXUof5At4KDOCp2E3FQRHFxdeiggw7+DeLg5uTo5G4RHUQ7Ogil4KIWUbEFLbaNSdv0cuc3Tu5u4sEnXN4Ll/fCCxlj2G8WZ79cf+AAuZvbZDLUnnl5Hnkq5CfHQ6F2GnEFN9AFAxCGEvTCMRRhEmbl3UeeMUOjp+epTK1aXhBSHSJRgxlYh0c4Aw8yELxgDo7gVVJbD9WqiZTXiC92WuoARe38qHAlqBKScAlrcAX7MAILsl5pTler+lap8DXneolInyBhG1TFiPUwwx4YowvEtNYyh1hW8PaW1mJPG3kvJlbHEpbVKJIMZ+v17iGl5LI2lOZcRTFjFSLVLUQrRVxNJeKFy0i4krfd/mErUt5OxG5c2sjO41CTJGoNOp/RmOtYca3IcN70fEV9xvguM+rN+H6Dk+srj9mO09WSwrYF917o3Sl9NxsMNCcj0EIU2w6jWTDkLi5NfGQ/uEFb388RQ1LzEPY+/f8L7EuAAQBY8agFnYgsqAAAAABJRU5ErkJggg==',
   },
@@ -343,9 +343,8 @@ export default function App() {
 
   // ─── Tab Cloak: preset application + reset ───────────────────────────────
   const applyPreset = useCallback((p: { label: string; title: string; favicon: string }) => {
-    // Populate the input with the preset's label (the long name for most
-    // presets, "HTMW" for HowTheMarketWorks); launchCloak maps it back to the
-    // preset's title for the cloaked document.
+    // Populate the input with the preset's short label ("Gmail", "HTMW", ...);
+    // launchCloak maps it back to the preset's long title for the cloaked tab.
     setCustomTitle(p.label);
     setCustomFavicon(p.favicon);
   }, []);
