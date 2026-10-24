@@ -1003,7 +1003,6 @@ export default function App() {
                 icon={<Settings className="w-4 h-4" />}
                 onClick={() => setShowSettings(s => !s)}
                 title="Settings"
-                active={showSettings}
               />
             </div>
           </div>
