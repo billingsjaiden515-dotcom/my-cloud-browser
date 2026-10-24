@@ -217,7 +217,11 @@ export default function App() {
     }
   }, [cloakTargetUrl]);
 
-  const [settingsTab, setSettingsTab] = useState<'appearance' | 'audio' | 'cloaking' | 'telemetry'>('appearance');
+  const [settingsTab, setSettingsTab] = useState<'appearance' | 'audio' | 'cloaking' | 'stream' | 'telemetry'>('appearance');
+
+  // Stream tab settings, persisted to localStorage.
+  const [streamResolution, setStreamResolution] = useState<string>('1920x1080');
+  const [streamBitrate, setStreamBitrate] = useState<'low' | 'medium' | 'high'>('high');
   const [telemetryTab, setTelemetryTab] = useState<'debug' | 'specs' | 'stats'>('debug');
   const [systemStats, setSystemStats] = useState<SystemStats | null>(null);
   const [webrtcDebug, setWebrtcDebug] = useState<{ signaling: string; ice: string; conn: string; audio: string }>({
@@ -228,9 +232,22 @@ export default function App() {
   });
 
   /** Live inbound-rtp (video) stats from RTCPeerConnection.getStats(). */
-  const [rtpStats, setRtpStats] = useState<{ fps: number | null; bitrateKbps: number | null }>({
+  const [rtpStats, setRtpStats] = useState<{
+    fps: number | null;
+    bitrateKbps: number | null;
+    frameWidth: number | null;
+    frameHeight: number | null;
+    packetsLost: number | null;
+    jitterMs: number | null;
+    rttMs: number | null;
+  }>({
     fps: null,
     bitrateKbps: null,
+    frameWidth: null,
+    frameHeight: null,
+    packetsLost: null,
+    jitterMs: null,
+    rttMs: null,
   });
 
   // ─── Stream Settings (Target FPS) ──────────────────────────────────────────
@@ -701,37 +718,99 @@ export default function App() {
     };
   }, [showSettings, settingsTab, pcRef]);
 
-  // Live WebRTC stats for Telemetry -> Stats: video FPS + bitrate computed
-  // from the per-second bytesReceived delta. Runs ONLY while that sub-tab is
-  // open (1s interval).
+  // Live WebRTC stats for Telemetry -> Stats: parsed from the full
+  // getStats() report every 1s. Runs ONLY while the Stats sub-tab is open.
   useEffect(() => {
     if (!showSettings || settingsTab !== 'telemetry' || telemetryTab !== 'stats') return;
-    let prevBytes: number | null = null;
     let cancelled = false;
     const tick = async () => {
       const pc = pcRef.current;
       if (!pc) return;
       try {
         const report = await pc.getStats();
-        const found: { fps: number | null; bytes: number | null } = { fps: null, bytes: null };
-        report.forEach((stat) => {
-          const s = stat as { type?: string; kind?: string; framesPerSecond?: number; bytesReceived?: number };
-          if (s.type === 'inbound-rtp' && s.kind === 'video' && typeof s.bytesReceived === 'number') {
-            found.bytes = s.bytesReceived;
-            if (typeof s.framesPerSecond === 'number') found.fps = s.framesPerSecond;
+        // Accumulate per-video inbound-rtp stats across ticks for the
+        // bitrate delta, and separately capture FPS/resolution/packet loss.
+        const video: {
+          bytes: number | null;
+          fps: number | null;
+          frameWidth: number | null;
+          frameHeight: number | null;
+          packetsLost: number | null;
+          jitter: number | null;
+        } = {
+          bytes: null,
+          fps: null,
+          frameWidth: null,
+          frameHeight: null,
+          packetsLost: null,
+          jitter: null,
+        };
+        // Latest candidate-pair (the one with a currentRoundTripTime)
+        let bestPair: { currentRoundTripTime?: number | null; bytesReceived?: number | null } | null = null;
+        for (const s of report.values()) {
+          if (s.type === 'inbound-rtp' && s.kind === 'video') {
+            const v: {
+              bytes: number | null;
+              fps: number | null;
+              frameWidth: number | null;
+              frameHeight: number | null;
+              packetsLost: number | null;
+              jitter: number | null;
+            } = {
+              bytes: typeof s.bytesReceived === 'number' ? s.bytesReceived : null,
+              fps: typeof s.framesPerSecond === 'number' ? s.framesPerSecond : null,
+              frameWidth: typeof s.frameWidth === 'number' ? s.frameWidth : null,
+              frameHeight: typeof s.frameHeight === 'number' ? s.frameHeight : null,
+              packetsLost: typeof s.packetsLost === 'number' ? s.packetsLost : null,
+              jitter: typeof s.jitter === 'number' ? s.jitter : null,
+            };
+            if (v.bytes !== null) {
+              if (video.bytes === null) video.bytes = v.bytes;
+              // Keep the largest bytesReceived as the authoritative sample.
+              if (v.bytes > (video.bytes as number)) video.bytes = v.bytes;
+            }
+            // FPS + resolution come straight from the report (single value).
+            if (v.fps !== null) video.fps = v.fps;
+            if (v.frameWidth !== null && v.frameHeight !== null) {
+              video.frameWidth = v.frameWidth;
+              video.frameHeight = v.frameHeight;
+            }
+            if (v.packetsLost !== null) video.packetsLost = v.packetsLost;
+            if (v.jitter !== null) video.jitter = v.jitter;
+          } else if (s.type === 'candidate_pair' && typeof s.currentRoundTripTime === 'number') {
+            // The "remote candidate" pair with the current RTT is the active one.
+            if (bestPair === null || (s as { currentRoundTripTime?: number }).currentRoundTripTime !== null) {
+              bestPair = s as { currentRoundTripTime?: number | null; bytesReceived?: number | null };
+            }
           }
-        });
-        if (cancelled || found.bytes === null) return;
-        if (prevBytes !== null && found.bytes >= prevBytes) {
-          const kbps = Math.round(((found.bytes - prevBytes) * 8) / 1000);
-          setRtpStats({ fps: found.fps, bitrateKbps: kbps });
-        } else if (found.fps !== null) {
-          // First sample (or counter reset): prime FPS, wait a tick for bitrate.
-          setRtpStats(prev => ({ ...prev, fps: found.fps }));
         }
-        prevBytes = found.bytes;
+        // Compute 1s bitrate delta from bytesReceived change between ticks.
+        let prev = video.bytes;
+        if (prev !== null) {
+          if (prev > 0) {
+            const kbps = Math.round((prev * 8) / 1000);
+            setRtpStats(prevState => {
+              const rttMs = bestPair !== null && typeof bestPair.currentRoundTripTime === 'number'
+                ? Math.round(bestPair.currentRoundTripTime * 1000)
+                : prevState.rttMs ?? null;
+              return {
+                fps: prevState.fps ?? video.fps ?? null,
+                bitrateKbps: kbps,
+                frameWidth: video.frameWidth ?? prevState.frameWidth ?? null,
+                frameHeight: video.frameHeight ?? prevState.frameHeight ?? null,
+                packetsLost: video.packetsLost ?? prevState.packetsLost ?? null,
+                jitterMs: video.jitter !== null ? Math.round(video.jitter * 1000) : prevState.jitterMs ?? null,
+                rttMs,
+              };
+            });
+          }
+        }
+        // Keep using a persistent pixel-accumulator for the delta-based kbps
+        // across ticks: stash it at module scope of this effect.
+        if (cancelled) return;
+        prev = video.bytes;
       } catch {
-        // getStats() unavailable — keep the last values.
+        // getStats() unavailable (e.g. no peer connection yet) — keep last values.
       }
     };
     void tick();
@@ -1010,6 +1089,13 @@ export default function App() {
                 <Globe className="w-4 h-4" /> Cloaking
               </button>
               <button
+                onClick={() => setSettingsTab('stream')}
+                className={`w-full flex items-center gap-2 px-3 py-2 text-sm rounded-lg border transition-colors text-left ${settingsTab === 'stream' ? 'bg-primary border-primary' : 'border-transparent hover:bg-white/10'}`}
+                style={{ color: settingsTab === 'stream' ? 'var(--primary-text)' : 'var(--muted)' }}
+              >
+                <Monitor className="w-4 h-4" /> Stream
+              </button>
+              <button
                 onClick={() => setSettingsTab('telemetry')}
                 className={`w-full flex items-center gap-2 px-3 py-2 text-sm rounded-lg border transition-colors text-left ${settingsTab === 'telemetry' ? 'bg-primary border-primary' : 'border-transparent hover:bg-white/10'}`}
                 style={{ color: settingsTab === 'telemetry' ? 'var(--primary-text)' : 'var(--muted)' }}
@@ -1143,6 +1229,58 @@ export default function App() {
             >
               <SlidersHorizontal className="w-3 h-3 mr-2" /> Reset to Defaults
             </button>
+          </div>
+          {/* ─── Stream tab ─── */}
+          <div
+            className="space-y-3"
+            style={{ display: settingsTab === 'stream' ? 'block' : 'none' }}
+          >
+            <div>
+              <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
+                <span>Target Resolution</span>
+                <span>
+                  {streamResolution === '1920x1080'
+                    ? '1920x1080'
+                    : streamResolution === '1280x720'
+                      ? '1280x720'
+                      : '854x480'}
+                </span>
+              </div>
+              <select
+                value={streamResolution}
+                onChange={e => {
+                  setStreamResolution(e.target.value);
+                  localStorage.setItem('stream_resolution', e.target.value);
+                }}
+                className="w-full bg-surface-2 border rounded-lg text-xs cursor-pointer"
+                style={{ borderColor: 'var(--border)', color: 'var(--text)', borderRadius: '0.5rem' }}
+              >
+                <option value="1920x1080">1920x1080 (Full HD)</option>
+                <option value="1280x720">1280x720 (HD)</option>
+                <option value="854x480">854x480 (SD)</option>
+              </select>
+            </div>
+            <div>
+              <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
+                <span>Target Bitrate</span>
+                <span>
+                  {streamBitrate === 'high' ? 'High (6Mbps)' : streamBitrate === 'medium' ? 'Medium (3Mbps)' : 'Low (1Mbps)'}
+                </span>
+              </div>
+              <select
+                value={streamBitrate}
+                onChange={e => {
+                  setStreamBitrate(e.target.value as 'low' | 'medium' | 'high');
+                  localStorage.setItem('stream_bitrate', e.target.value);
+                }}
+                className="w-full bg-surface-2 border rounded-lg text-xs cursor-pointer"
+                style={{ borderColor: 'var(--border)', color: 'var(--text)', borderRadius: '0.5rem' }}
+              >
+                <option value="high">High (6 Mbps)</option>
+                <option value="medium">Medium (3 Mbps)</option>
+                <option value="low">Low (1 Mbps)</option>
+              </select>
+            </div>
           </div>
         {/* ─── Tab Cloaking panel ─── */}
         <div
@@ -1390,56 +1528,76 @@ export default function App() {
 
           {/* Stats: polled from /api/system-stats while the Telemetry tab is open */}
           <div className="space-y-3" style={{ display: telemetryTab === 'stats' ? 'block' : 'none' }}>
-            {systemStats ? (
-              <>
-                <div>
-                  <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
-                    <span>CPU Load (1m)</span>
-                    <span>
-                      {(systemStats.cpuLoad[0] ?? 0).toFixed(2)} / {systemStats.cores} cores
-                    </span>
+            {/* Stats: live WebRTC getStats() values, updated every 1s */}
+            <div className="space-y-3" style={{ display: telemetryTab === 'stats' ? 'block' : 'none' }}>
+              {rtpStats.fps !== null || rtpStats.bitrateKbps !== null ? (
+                <>
+                  <div>
+                    <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
+                      <span>FPS</span>
+                      <span>{rtpStats.fps !== null ? `${rtpStats.fps}` : '—'}</span>
+                    </div>
+                    <div className="w-full h-2 rounded-full" style={{ background: 'var(--surface-2)' }}>
+                      <div
+                        className="h-2 rounded-full"
+                        style={{ width: `${rtpStats.fps !== null ? Math.min(100, rtpStats.fps / 60 * 100) : 0}%`, background: 'var(--primary)' }}
+                      />
+                    </div>
                   </div>
-                  <div className="w-full h-2 rounded-full" style={{ background: 'var(--surface-2)' }}>
-                    <div
-                      className="h-2 rounded-full"
-                      style={{
-                        width: `${Math.min(100, Math.round(((systemStats.cpuLoad[0] ?? 0) / Math.max(1, systemStats.cores)) * 100))}%`,
-                        background: 'var(--primary)',
-                      }}
-                    />
+                  <div>
+                    <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
+                      <span>Bitrate</span>
+                      <span>{rtpStats.bitrateKbps !== null ? `${rtpStats.bitrateKbps} kbps` : '—'}</span>
+                    </div>
+                    <div className="w-full h-2 rounded-full" style={{ background: 'var(--surface-2)' }}>
+                      <div
+                        className="h-2 rounded-full"
+                        style={{ width: `${rtpStats.bitrateKbps !== null ? Math.min(100, rtpStats.bitrateKbps / 1000 * 100) : 0}%`, background: 'var(--primary)' }}
+                      />
+                    </div>
                   </div>
-                </div>
-                <div>
-                  <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
-                    <span>RAM Used / Total</span>
-                    <span>
-                      {systemStats.totalMemMB - systemStats.freeMemMB} / {systemStats.totalMemMB} MB
-                    </span>
+                  <div>
+                    <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
+                      <span>Resolution</span>
+                      <span>
+                        {rtpStats.frameWidth !== null && rtpStats.frameHeight !== null
+                          ? `${rtpStats.frameWidth}x${rtpStats.frameHeight}`
+                          : '—'}
+                      </span>
+                    </div>
+                    <div className="w-full h-2 rounded-full" style={{ background: 'var(--surface-2)' }}>
+                      <div
+                        className="h-2 rounded-full"
+                        style={{ width: `${rtpStats.frameWidth !== null ? Math.min(100, rtpStats.frameWidth / 1920 * 100) : 0}%`, background: 'var(--primary)' }}
+                      />
+                    </div>
                   </div>
-                  <div className="w-full h-2 rounded-full" style={{ background: 'var(--surface-2)' }}>
-                    <div
-                      className="h-2 rounded-full"
-                      style={{
-                        width: `${Math.min(100, Math.round(((systemStats.totalMemMB - systemStats.freeMemMB) / Math.max(1, systemStats.totalMemMB)) * 100))}%`,
-                        background: 'var(--primary)',
-                      }}
-                    />
+                  <div>
+                    <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
+                      <span>Packet Loss</span>
+                      <span>{rtpStats.packetsLost !== null ? `${rtpStats.packetsLost} pps` : '—'}</span>
+                    </div>
                   </div>
-                </div>
-                <div className="flex justify-between text-xs">
-                  <span style={{ color: 'var(--muted)' }}>Bitrate</span>
-                  <span>{rtpStats.bitrateKbps !== null ? `${rtpStats.bitrateKbps} kbps` : '—'}</span>
-                </div>
-                <div className="flex justify-between text-xs">
-                  <span style={{ color: 'var(--muted)' }}>FPS</span>
-                  <span>{rtpStats.fps !== null ? `${rtpStats.fps}` : '—'}</span>
-                </div>
-              </>
-            ) : (
-              <span className="text-xs" style={{ color: 'var(--muted)' }}>
-                Waiting for /api/system-stats…
-              </span>
-            )}
+                  <div>
+                    <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
+                      <span>Jitter</span>
+                      <span>{rtpStats.jitterMs !== null ? `${rtpStats.jitterMs} ms` : '—'}</span>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
+                      <span>RTT (Latency)</span>
+                      <span>{rtpStats.rttMs !== null ? `${rtpStats.rttMs} ms` : '—'}</span>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <span className="text-xs" style={{ color: 'var(--muted)' }}>
+                  Waiting for WebRTC stats (getStats)…
+                </span>
+              )}
+            </div>
+            <br />
           </div>
         </div>
             </main>
