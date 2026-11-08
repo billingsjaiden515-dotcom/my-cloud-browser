@@ -362,20 +362,29 @@ export class BrowserSession {
         // these reports outerWidth/outerHeight = 1900x1060.
         //
         // '=' form rather than space-separated '-width 1900 -height 1060'.
-        // Both work and both open about:blank (verified by launching Firefox
-        // both ways) -- Puppeteer's about:blank append in
-        // FirefoxLauncher.defaultArgs() is only skipped for the space form,
-        // but Firefox opens its default page regardless, so the outcome is the
-        // same. '=' is kept because it is the unambiguous form for Gecko: a
-        // bare '1900' on the command line is a positional argument, and the
+        // Both would open about:blank, so Puppeteer's default-arg about:blank
+        // is dropped via ignoreDefaultArgs below: Firefox must open its own
+        // startup page (about:home, set via user.js prefs below) instead of a
+        // blank screen. '=' is kept because it is the unambiguous form for
+        // Gecko: a bare '1900' on the command line is a positional argument, and the
         // pairing between flag and value is never ambiguous this way.
         //
         // This does NOT affect chromeTop: that is measured from the real
         // rendered window via xdotool in measureChromeGeometry(), never
         // assumed from these numbers.
+        // Drop Puppeteer's default about:blank arg so Firefox opens its own
+        // startup page instead of a blank screen.
+        ignoreDefaultArgs: ['about:blank'],
         args: ['-width=1920', '-height=1080'],
         extraPrefsFirefox: {
           'browser.shell.checkDefaultBrowser': false,
+          // Force the startup URL to about:home (not about:blank). These prefs
+          // are written into the launch profile's user.js by Puppeteer's
+          // createProfile() BEFORE Firefox starts, so the first page is
+          // about:home.
+          'browser.startup.page': 1,
+          'browser.startup.homepage': 'about:home',
+          'browser.newtabpage.enabled': true,
           'browser.startup.homepage_override.mstone': 'ignore',
           'datareporting.policy.dataSubmissionEnabled': false,
           'toolkit.telemetry.enabled': false,
@@ -543,8 +552,9 @@ export class BrowserSession {
       //
       //   goto('about:newtab')        -> browsingContext.navigate: unsupported
       //   goto('about:home')          -> same refusal
-      //   startup prefs in user.js    -> still opens about:blank, because
-      //                                   Puppeteer forces its own about:blank
+      //   startup prefs in user.js    -> honored: about:blank is dropped from
+      //                                   the launch args (ignoreDefaultArgs
+      //                                   above) and about:home is the startup URL
       //   'about:newtab' as a CLI URL -> url IS about:newtab, BUT then:
       //        page.evaluate()        -> script.callFunction: unsupported
       //        page.screenshot()      -> captureScreenshot: unsupported

@@ -26,6 +26,8 @@ export interface RemoteBrowserApi {
   sessionId: string | null;
   connectionState: ConnectionState;
   error: string | null;
+  /** Launch-pad status text driven by live RTCPeerConnection state transitions. */
+  loadingStage: string | null;
   currentUrl: string;
   currentTitle: string;
   tabs: TabInfo[];
@@ -128,6 +130,10 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
   const DEAD_CONFIRM_POLLS = 2;
   const consecutiveDeadRef = useRef(0);
   const [reconnecting, setReconnecting] = useState(false);
+  // Launch-pad status text, driven by REAL WebRTC state transitions — NOT a
+  // timer. Updated from the RTCPeerConnection handlers in setupWebRTC() and
+  // rendered by BrowserViewport while the session starts.
+  const [loadingStage, setLoadingStage] = useState<string | null>(null);
   // Mirrors of state for use inside the 1.5s poll closure, which is created once
   // and would otherwise capture stale values.
   const connectionStateRef = useRef<ConnectionState>(connectionState);
@@ -293,10 +299,16 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
       const state = pc.connectionState;
       const at = new Date().toISOString().slice(11, 23);
       console.log(`[Client] WebRTC connection state: ${state} at ${at} (ice=${pc.iceConnectionState}, session=${sessionIdRef.current ?? '?'})`);
+      if (state === 'connecting') {
+        // Remote description applied and the connection attempt is underway.
+        setLoadingStage('Establishing WebRTC stream...');
+      }
+
       if (state === 'connected') {
         // Recovery worked (or was never needed): reset the retry budget and
         // cancel any pending grace timer so a later 'disconnected' starts fresh.
         clearIceGraceTimer();
+        setLoadingStage(null);
         if (restartAttemptRef.current > 0) {
           console.log(`[Client] Connection recovered after ${restartAttemptRef.current} attempt(s)`);
         }
@@ -349,6 +361,11 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
     pc.onicegatheringstatechange = () => {
       const at = new Date().toISOString().slice(11, 23);
       console.log(`[Client] ICE gathering state: ${pc.iceGatheringState} at ${at} (session=${sid})`);
+      if (pc.iceGatheringState === 'gathering') {
+        // Offer/answer has started and ICE is being gathered — the real signal
+        // to stop showing "Launching" and report the actual stage.
+        setLoadingStage('Gathering ICE candidates...');
+      }
     };
 
     pc.ontrack = (event: RTCTrackEvent) => {
@@ -435,6 +452,7 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
     setReconnecting(false);
     setError(null);
     setConnectionState('connecting');
+    setLoadingStage(`Launching ${browserType}...`);
 
     try {
       const response = await fetch(`${API_BASE}/api/session/start`, {
@@ -587,6 +605,7 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
     setTabs([]);
     setActiveTabId(null);
     setError(null);
+    setLoadingStage(null);
   }, [videoRef, stopPolling]);
 
   // ─── Input helpers ──────────────────────────────────────────────────────────
@@ -738,6 +757,7 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
     sendKeyUp,
     sendKeyPress,
     typeText,
+    loadingStage,
     setAudioBitrate,
     // Exposed for the Telemetry > Debug panel (ICE / signaling state display).
     pcRef,

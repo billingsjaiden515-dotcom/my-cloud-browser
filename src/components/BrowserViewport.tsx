@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import type { RemoteBrowserApi, ConnectionState } from '@/hooks/useRemoteBrowser';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -17,6 +17,8 @@ interface BrowserViewportProps {
   isConnecting: boolean;
   /** Browser chosen in the header dropdown — shown in the launch messages. */
   selectedBrowser: string;
+  /** Live launch-pad status text from the WebRTC connection states (null = nothing to show). */
+  loadingStage: string | null;
 }
 
 // Keys that need to be prevented from triggering browser shortcuts
@@ -39,31 +41,9 @@ const KEY_MAP: Record<string, string> = {
 // Track which modifiers are currently held down
 const MODIFIER_KEYS = new Set(['Control', 'Shift', 'Alt', 'Meta']);
 
-// Launch-pad status lines cycled every 800ms while the session starts.
-const buildLaunchSteps = (browser: string): string[] => [
-  'Initializing Xvfb :99...',
-  'Starting PulseAudio...',
-  `Launching ${browser}...`,
-  'Connecting to x11grab...',
-  'Encoding to VP8...',
-  'Gathering ICE candidates...',
-  'Establishing WebRTC stream...',
-];
-
-export function BrowserViewport({ api, connectionState, videoRef, immersive, volume, bass, treble, isConnecting, selectedBrowser }: BrowserViewportProps) {
+export function BrowserViewport({ api, connectionState, videoRef, immersive, volume, bass, treble, isConnecting, selectedBrowser, loadingStage }: BrowserViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const isConnected = connectionState === 'connected';
-  // Rocket launch pad: cycles a status step every 800ms while connecting.
-  const [launchStep, setLaunchStep] = useState(0);
-  const launchSteps = buildLaunchSteps(selectedBrowser);
-  useEffect(() => {
-    if (!isConnecting) {
-      setLaunchStep(0);
-      return;
-    }
-    const id = setInterval(() => setLaunchStep(s => (s + 1) % launchSteps.length), 800);
-    return () => clearInterval(id);
-  }, [isConnecting, selectedBrowser, launchSteps.length]);
   // Track drag state: which button is currently held down
   const dragRef = useRef<{ button: 'left' | 'right' | 'middle' } | null>(null);
   // Track actual viewport dimensions (not video element dimensions which may be 0 for WebRTC)
@@ -400,7 +380,7 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
               {/* Launch pad */}
               <div className="h-3 w-44 rounded-full bg-gray-600 shadow-lg" />
             </div>
-            <p className="font-mono text-green-400 text-sm text-center px-8">{launchSteps[launchStep]}</p>
+            <p className="font-mono text-green-400 text-sm text-center px-8">{loadingStage}</p>
           </motion.div>
         )}
       </AnimatePresence>

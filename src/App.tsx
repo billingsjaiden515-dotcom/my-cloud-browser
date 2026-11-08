@@ -61,7 +61,7 @@ interface SystemStats {
   freeMemMB: number;
 }
 
-/** Target FPS options for Settings > Appearance > Stream Settings. */
+/** Target FPS options for Settings > Stream > Stream Settings. */
 const FPS_OPTIONS = ['15', '20', '30', '40', '60', 'unlimited'] as const;
 
 // Tab Cloaking presets: clickable tiles that pre-fill the Title / Favicon inputs.
@@ -285,7 +285,7 @@ export default function App() {
   // favicon/title must describe what is running, not what is highlighted.
   const [runningBrowser, setRunningBrowser] = useState<string | null>(null);
 
-  const { connectionState, error, currentUrl, currentTitle, availableBrowsers, setAudioBitrate, pcRef } = api;
+  const { connectionState, error, currentUrl, currentTitle, availableBrowsers, loadingStage, setAudioBitrate, pcRef } = api;
   const isConnected = connectionState === 'connected';
   const isConnecting = connectionState === 'connecting';
   const isBusy = isConnecting;
@@ -1132,30 +1132,6 @@ export default function App() {
               </button>
             ))}
           </div>
-          <div className="space-y-3" style={{ display: settingsTab === 'appearance' ? 'block' : 'none' }}>
-            <div className="pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
-              <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
-                <span>Stream Settings</span>
-              </div>
-              <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
-                <span>Target FPS</span>
-                <span>{targetFps === 'unlimited' ? 'Unlimited' : targetFps}</span>
-              </div>
-              <select
-                value={targetFps}
-                onChange={e => setTargetFps(e.target.value)}
-                className="w-full bg-surface-2 border rounded-lg text-xs cursor-pointer"
-                style={{ borderColor: 'var(--border)', color: 'var(--text)', borderRadius: '0.5rem' }}
-              >
-                <option value="15">15</option>
-                <option value="20">20</option>
-                <option value="30">30</option>
-                <option value="40">40</option>
-                <option value="60">60</option>
-                <option value="unlimited">Unlimited</option>
-              </select>
-            </div>
-          </div>
           <div className="space-y-3" style={{ display: settingsTab === 'audio' ? 'block' : 'none' }}>
             <div>
               <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
@@ -1279,6 +1255,30 @@ export default function App() {
                 <option value="medium">Medium (3 Mbps)</option>
                 <option value="low">Low (1 Mbps)</option>
               </select>
+            </div>
+            <div className="space-y-3" style={{ display: settingsTab === 'stream' ? 'block' : 'none' }}>
+              <div className="pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
+                <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
+                  <span>Stream Settings</span>
+                </div>
+                <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
+                  <span>Target FPS</span>
+                  <span>{targetFps === 'unlimited' ? 'Unlimited' : targetFps}</span>
+                </div>
+                <select
+                  value={targetFps}
+                  onChange={e => setTargetFps(e.target.value)}
+                  className="w-full bg-surface-2 border rounded-lg text-xs cursor-pointer"
+                  style={{ borderColor: 'var(--border)', color: 'var(--text)', borderRadius: '0.5rem' }}
+                >
+                  <option value="15">15</option>
+                  <option value="20">20</option>
+                  <option value="30">30</option>
+                  <option value="40">40</option>
+                  <option value="60">60</option>
+                  <option value="unlimited">Unlimited</option>
+                </select>
+              </div>
             </div>
           </div>
         {/* ─── Tab Cloaking panel ─── */}
@@ -1618,6 +1618,7 @@ export default function App() {
           bass={audioSettings.bass}
           treble={audioSettings.treble}
           isConnecting={isConnecting}
+          loadingStage={loadingStage}
           selectedBrowser={selectedBrowser}
         />
       </div>
