@@ -471,6 +471,11 @@ export class BrowserSession {
           // accept --window-size=1920,1080 without complaint; the window border
           ///shadow is outside the capture region and is not clipped here.
           '--window-size=1920,1080',
+          // Start maximized so the window fills the display and the window
+          // manager has no off-screen room to drag it into when a titlebar
+          // click is misread as a drag (the "screen shift" bug). Keep this in
+          // step with the 1920x1080 capture region above.
+          '--start-maximized',
           // Show tab strip in headful mode. SuppressUnsupportedFlagWarning now
           // rides along in `disableFeatures` above -- it must NOT be repeated
           // here as a second --disable-features, or only one of the two survives.

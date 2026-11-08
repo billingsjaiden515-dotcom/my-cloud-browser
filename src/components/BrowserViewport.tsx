@@ -151,23 +151,17 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
     if (!video) return { x: 0, y: 0 };
 
     const rect = video.getBoundingClientRect();
-    // Use the server-reported capture dimensions (window size incl. browser
-    // chrome). Fall back to the tracked viewport size. WebRTC streams report
-    // video.videoWidth/videoHeight as 0, so we can't use those.
-    const videoW = api.geometry?.width ?? viewportRef.current.w;
-    const videoH = api.geometry?.height ?? viewportRef.current.h;
-
-    // The video renders with object-fit: cover, top-left anchored: uniform
-    // max-scale to fill the container, cropping bottom/right overflow. Map
-    // client coords with the same max-scale and clamp into capture bounds
-    // (clicks on cropped-out regions clamp to the nearest visible edge).
-    const scale = Math.max(rect.width / videoW, rect.height / videoH);
+    // object-fit: contain letterboxes the 1920x1080 capture inside the video
+    // element (black bars on the sides or top/bottom). Map each axis by its
+    // own scale so clicks land on the real content, not on letterbox bars.
+    const scaleX = 1920 / rect.width;
+    const scaleY = 1080 / rect.height;
 
     return {
-      x: Math.max(0, Math.min(videoW, Math.round((e.clientX - rect.left) / scale))),
-      y: Math.max(0, Math.min(videoH, Math.round((e.clientY - rect.top) / scale))),
+      x: Math.max(0, Math.min(1920, Math.round((e.clientX - rect.left) * scaleX))),
+      y: Math.max(0, Math.min(1080, Math.round((e.clientY - rect.top) * scaleY))),
     };
-  }, [videoRef, api.geometry]);
+  }, [videoRef]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (!isConnected) return;
@@ -184,6 +178,10 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
     // Attach window-level listeners for reliable drag tracking outside video bounds
     const onMove = (we: MouseEvent) => {
       if (!dragRef.current) return;
+      // Throttle drag moves to ~30fps (33ms) so the server isn't flooded mid-drag
+      const now = performance.now();
+      if (now - lastMouseMoveTime.current < 33) return;
+      lastMouseMoveTime.current = now;
       const coords = getRelativeCoords(we);
       api.sendMouseMove(coords.x, coords.y);
     };
@@ -338,8 +336,11 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
           // click mapping.
           width: '100%',
           height: '100%',
-          objectFit: 'cover',
-          objectPosition: 'top left',
+          // object-fit: contain keeps the 1920x1080 capture at a perfect 16:9
+          // aspect ratio, letterboxing with black bars instead of stretching.
+          // Stretching distorts the frame and breaks click mapping.
+          objectFit: 'contain',
+          objectPosition: 'center',
         }}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}

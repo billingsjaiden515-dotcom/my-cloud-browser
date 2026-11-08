@@ -428,6 +428,42 @@ else
   else
     echo "WARNING: xfwm4 failed to start — keyboard focus may not work"
   fi
+
+  # ── Prevent the window manager from dragging the browser window ──────────
+  # Symptom: a click on the browser titlebar is misread by the window manager
+  # as the start of a window drag, shifting the whole browser off-center (to
+  # the left) mid-session. Defeat it on two fronts:
+  #   1. Chromium is launched --start-maximized (browser-session.ts) so the WM
+  #      has no off-screen room to drag the window into.
+  #   2. Configure the WM so titlebar clicks cannot start a drag.
+  # openbox (rc.xml): bind titlebar button-press+drag to "nothing" so a click
+  # never initiates a move. Idempotent; harmless if openbox isn't the WM.
+  mkdir -p /etc/xdg/openbox
+  cat > /etc/xdg/openbox/rc.xml <<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<openbox_config>
+  <mouse>
+    <!-- Drag: titlebar + edges start a move by default. Unbind them so a
+         click can never be mistaken for a window drag (fixes screen shift). -->
+    <dragThreshold>99999</dragThreshold>
+    <context titlebar="yes">
+      <mouse button="Left" action="Press"><action name="Focus"/></mouse>
+      <mouse button="Left" action="Drag"><action name="None"/></mouse>
+    </context>
+    <context edge="Top">
+      <mouse button="Left" action="Drag"><action name="None"/></mouse>
+    </context>
+  </mouse>
+</openbox_config>
+XML
+  echo "  openbox rc.xml: titlebar drag disabled"
+
+  # xfwm4 (the WM actually started by this script): best-effort disable of
+  # titlebar drags via xfconf. Swallowed if the channel/key isn't supported.
+  if command -v xfconf-query >/dev/null 2>&1; then
+    xfconf-query -c xfwm4 -p /general/mouse_move_window -n -t bool -s false >/dev/null 2>&1 || true
+    echo "  xfwm4: attempted titlebar drag disable (xfconf)"
+  fi
 fi
 
 # Configure PulseAudio with a virtual null sink so headful Chromium has an
