@@ -1,5 +1,6 @@
 import puppeteer, { Browser, Page } from 'puppeteer-core';
 import { spawn, ChildProcess } from 'child_process';
+import { exec } from 'child_process';
 import { getChromiumPath, isChromiumFamily } from './browser-finder.js';
 import { spawnTracked, killChild, registerExternalChild } from './process-reaper.js';
 
@@ -501,6 +502,16 @@ export class BrowserSession {
     this.browser.on('disconnected', () => {
       if (!this.stopping) this.markDead('browser process disconnected (crashed or killed)');
     });
+
+    // Force the window to exactly 1920x1080 at position 0,0 once the
+    // Chromium process is up. --window-size pins the content area at startup,
+    // but a running window manager can drift the outer frame; this makes sure
+    // the Xvfb display is covered with no black border on any side.
+    // xdotool is present on the target host (installed with the devcontainer
+    // and the VPS image); failures are best-effort and never block session start.
+    setTimeout(() => {
+      exec('xdotool search --sync --onlyvisible --class "chromium" windowsize 1920 1080 windowmove 0 0');
+    }, 1000);
 
     const tabId = this.getPageId(page);
     this.pages.set(tabId, page);

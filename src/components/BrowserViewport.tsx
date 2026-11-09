@@ -19,8 +19,6 @@ interface BrowserViewportProps {
   selectedBrowser: string;
   /** Live launch-pad status text from the WebRTC connection states (null = nothing to show). */
   loadingStage: string | null;
-  /** Video scaling mode: 'cover' | 'contain' | 'fill'. */
-  videoScale: 'cover' | 'contain' | 'fill';
 }
 
 // Keys that need to be prevented from triggering browser shortcuts
@@ -43,7 +41,7 @@ const KEY_MAP: Record<string, string> = {
 // Track which modifiers are currently held down
 const MODIFIER_KEYS = new Set(['Control', 'Shift', 'Alt', 'Meta']);
 
-export function BrowserViewport({ api, connectionState, videoRef, immersive, volume, bass, treble, isConnecting, selectedBrowser, loadingStage, videoScale }: BrowserViewportProps) {
+export function BrowserViewport({ api, connectionState, videoRef, immersive, volume, bass, treble, isConnecting, selectedBrowser, loadingStage }: BrowserViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const isConnected = connectionState === 'connected';
   // Track drag state: which button is currently held down
@@ -130,13 +128,6 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
     return () => video.removeEventListener('click', resumeIfSuspended);
   }, [videoRef]);
 
-  // Sizing: the video uses object-fit: cover to keep the 1920x1080 stream at
-  // a perfect aspect ratio. It fits the container and crops overflow on the
-  // sides or top/bottom as needed. getRelativeCoords() below compensates for
-  // the cropped edges so clicks always land on the visible content.
-  // NOTE: no ResizeObserver / fitSize state here on purpose — sizing is pure
-  // CSS (100%/cover) and never triggers React re-renders.
-
   // NOTE: Coordinate mapping deliberately maps to the CAPTURE/video frame (which in
   // headful mode includes the browser chrome at the top). The server translates
   // capture coords -> page viewport coords using its measured chrome offset, so we
@@ -146,38 +137,16 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
     if (!video) return { x: 0, y: 0 };
 
     const rect = video.getBoundingClientRect();
-    // object-fit: cover keeps 1920x1080 at a perfect aspect ratio. Compute
-    // the cropped dimensions and centre offset so clicks land exactly on the
-    // visible content, even when the container aspect ratio differs from
-    // 16:9. For 'contain', the video letterboxes with black bars outside the
-    // content, so clicks map to the full 1920x1080 region (offsets = 0).
-    const videoRatio = 1920 / 1080;
-    const containerRatio = rect.width / rect.height;
-    let offsetX = 0;
-    let offsetY = 0;
-    let actualWidth = rect.width;
-    let actualHeight = rect.height;
-
-    if (videoScale !== 'contain') {
-      if (containerRatio > videoRatio) {
-        // Container is wider than video. Video fits height, crops left/right.
-        actualWidth = rect.height * videoRatio;
-        offsetX = (rect.width - actualWidth) / 2;
-      } else {
-        // Container is taller than video. Video fits width, crops top/bottom.
-        actualHeight = rect.width / videoRatio;
-        offsetY = (rect.height - actualHeight) / 2;
-      }
-    }
-
-    const scaleX = 1920 / actualWidth;
-    const scaleY = 1080 / actualHeight;
+    // Stretch: map to the full 1920x1080 capture frame with simple independent
+    // X/Y scaling and no offset math.
+    const scaleX = 1920 / rect.width;
+    const scaleY = 1080 / rect.height;
 
     return {
-      x: Math.max(0, Math.min(1920, Math.floor((e.clientX - rect.left - offsetX) * scaleX))),
-      y: Math.max(0, Math.min(1080, Math.floor((e.clientY - rect.top - offsetY) * scaleY))),
+      x: Math.floor((e.clientX - rect.left) * scaleX),
+      y: Math.floor((e.clientY - rect.top) * scaleY),
     };
-  }, [videoRef, videoScale]);
+  }, [videoRef]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (!isConnected) return;
@@ -346,14 +315,12 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
         transition={{ duration: 0.5, ease: 'easeOut' }}
         style={{
           display: isConnected ? 'block' : 'none',
-          // object-fit: cover keeps the 1920x1080 stream at a perfect aspect
-          // ratio (no distortion, no black bars). It fits the container and
-          // crops overflow on the sides or top/bottom as needed. Click math
-          // below compensates for the cropped edges so clicks always land on
-          // the visible content.
           width: '100%',
           height: '100%',
-          objectFit: videoScale,
+          // Stretch: fill the entire video element so the whole tab strip is
+          // visible with no black bars. object-fit: fill is the inline-style
+          // equivalent of CSS `object-fit: fill`.
+          objectFit: 'fill',
           objectPosition: 'center',
         }}
         onMouseDown={handleMouseDown}

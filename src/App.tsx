@@ -222,15 +222,7 @@ export default function App() {
   // Stream tab settings, persisted to localStorage.
   const [streamResolution, setStreamResolution] = useState<string>('1920x1080');
   const [streamBitrate, setStreamBitrate] = useState<'low' | 'medium' | 'high'>('high');
-  const [videoScale, setVideoScale] = useState<'cover' | 'contain' | 'fill'>(() => {
-    try {
-      const stored = localStorage.getItem('stream_scale');
-      if (stored === 'cover' || stored === 'contain' || stored === 'fill') return stored;
-    } catch {
-      // localStorage unavailable — fall through to the default.
-    }
-    return 'cover';
-  });
+
   const [telemetryTab, setTelemetryTab] = useState<'debug' | 'specs' | 'stats'>('debug');
   const [systemStats, setSystemStats] = useState<SystemStats | null>(null);
   const [webrtcDebug, setWebrtcDebug] = useState<{ signaling: string; ice: string; conn: string; audio: string }>({
@@ -287,14 +279,7 @@ export default function App() {
     });
   }, [targetFps]);
 
-  // Stream scale settings, persisted to localStorage.
-  useEffect(() => {
-    try {
-      localStorage.setItem('stream_scale', videoScale);
-    } catch {
-      // localStorage unavailable — keep the in-memory value.
-    }
-  }, [videoScale]);
+
 
   const [selectedBrowser, setSelectedBrowser] = useState('chromium');
   // Which browser the CURRENT session actually launched. Tracked separately
@@ -1286,28 +1271,6 @@ export default function App() {
                 <option value="low">Low (1 Mbps)</option>
               </select>
             </div>
-            <div>
-              <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
-                <span>Scaling Mode</span>
-                <span>
-                  {videoScale === 'cover'
-                    ? 'Cover (No Bars, Crops Edges)'
-                    : videoScale === 'contain'
-                      ? 'Contain (Fit Screen, Black Bars)'
-                      : 'Stretch (No Bars, Distorted)'}
-                </span>
-              </div>
-              <select
-                value={videoScale}
-                onChange={e => setVideoScale(e.target.value as 'cover' | 'contain' | 'fill')}
-                className="w-full bg-surface-2 border rounded-lg text-xs cursor-pointer"
-                style={{ borderColor: 'var(--border)', color: 'var(--text)', borderRadius: '0.5rem' }}
-              >
-                <option value="cover">Cover (No Bars, Crops Edges)</option>
-                <option value="contain">Contain (Fit Screen, Black Bars)</option>
-                <option value="fill">Stretch (No Bars, Distorted)</option>
-              </select>
-            </div>
             <div className="space-y-3" style={{ display: settingsTab === 'stream' ? 'block' : 'none' }}>
               <div className="pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
                 <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
@@ -1718,7 +1681,6 @@ export default function App() {
           isConnecting={isConnecting}
           loadingStage={loadingStage}
           selectedBrowser={selectedBrowser}
-          videoScale={videoScale}
         />
       </div>
 
