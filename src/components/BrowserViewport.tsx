@@ -128,13 +128,12 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
     return () => video.removeEventListener('click', resumeIfSuspended);
   }, [videoRef]);
 
-  // Sizing: the video STRETCHES to fill its container 100%x100% with
-  // object-fit 'fill'. The 1920x1080 stream is stretched (non-uniformly if
-  // needed) to cover every pixel of the container — there are no black bars
-  // and nothing is cropped. getRelativeCoords() below mirrors this by mapping
-  // each axis with its own independent scale factor.
+  // Sizing: the video uses object-fit: cover to keep the 1920x1080 stream at
+  // a perfect aspect ratio. It fits the container and crops overflow on the
+  // sides or top/bottom as needed. getRelativeCoords() below compensates for
+  // the cropped edges so clicks always land on the visible content.
   // NOTE: no ResizeObserver / fitSize state here on purpose — sizing is pure
-  // CSS (100%/fill) and never triggers React re-renders.
+  // CSS (100%/cover) and never triggers React re-renders.
 
   // NOTE: Coordinate mapping deliberately maps to the CAPTURE/video frame (which in
   // headful mode includes the browser chrome at the top). The server translates
@@ -145,15 +144,33 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
     if (!video) return { x: 0, y: 0 };
 
     const rect = video.getBoundingClientRect();
-    // object-fit: fill stretches the 1920x1080 capture to fill the video
-    // element, potentially non-uniformly. Map each axis by its own independent
-    // scale so clicks land exactly on the stretched content.
-    const scaleX = 1920 / rect.width;
-    const scaleY = 1080 / rect.height;
+    // object-fit: cover keeps 1920x1080 at a perfect aspect ratio. Compute
+    // the cropped dimensions and centre offset so clicks land exactly on the
+    // visible content, even when the container aspect ratio differs from
+    // 16:9.
+    const videoRatio = 1920 / 1080;
+    const containerRatio = rect.width / rect.height;
+    let offsetX = 0;
+    let offsetY = 0;
+    let actualWidth = rect.width;
+    let actualHeight = rect.height;
+
+    if (containerRatio > videoRatio) {
+      // Container is wider than video. Video fits height, crops left/right.
+      actualWidth = rect.height * videoRatio;
+      offsetX = (rect.width - actualWidth) / 2;
+    } else {
+      // Container is taller than video. Video fits width, crops top/bottom.
+      actualHeight = rect.width / videoRatio;
+      offsetY = (rect.height - actualHeight) / 2;
+    }
+
+    const scaleX = 1920 / actualWidth;
+    const scaleY = 1080 / actualHeight;
 
     return {
-      x: Math.max(0, Math.min(1920, Math.floor((e.clientX - rect.left) * scaleX))),
-      y: Math.max(0, Math.min(1080, Math.floor((e.clientY - rect.top) * scaleY))),
+      x: Math.max(0, Math.min(1920, Math.floor((e.clientX - rect.left - offsetX) * scaleX))),
+      y: Math.max(0, Math.min(1080, Math.floor((e.clientY - rect.top - offsetY) * scaleY))),
     };
   }, [videoRef]);
 
@@ -330,7 +347,8 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
           // scale factors to map onto this stretched content.
           width: '100%',
           height: '100%',
-          objectFit: 'fill',
+          objectFit: 'cover',
+          objectPosition: 'center',
         }}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
