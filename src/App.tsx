@@ -678,11 +678,10 @@ export default function App() {
   }, [antiCloseEnabled]);
 
   // ─── Telemetry ─────────────────────────────────────────────────────────────
-  // Poll /api/system-stats every 5s and refresh the local WebRTC snapshot
-  // every 1s — ONLY while the Telemetry settings tab is open. Switching away
-  // (or closing Settings) tears both intervals down.
+  // Poll /api/system-stats every 5s — ONLY while the Stats sub-tab is open.
+  // Switching sub-tabs or closing Settings tears the interval down.
   useEffect(() => {
-    if (!showSettings || settingsTab !== 'telemetry') return;
+    if (!showSettings || settingsTab !== 'telemetry' || telemetryTab !== 'stats') return;
 
     let cancelled = false;
     const pollStats = async () => {
@@ -698,22 +697,35 @@ export default function App() {
     pollStats();
     const statsId = setInterval(pollStats, 5000);
 
+    return () => {
+      cancelled = true;
+      clearInterval(statsId);
+    };
+  }, [showSettings, settingsTab, telemetryTab]);
+
+  // Refresh live WebRTC debug state (signaling/ice/conn/audio) every 1s —
+  // ONLY while the Telemetry settings tab is open (feeds the Debug sub-tab).
+  useEffect(() => {
+    if (!showSettings || settingsTab !== 'telemetry') return;
+
+    let cancelled = false;
     const readWebRTC = () => {
       const pc = pcRef.current;
       const audioTrack = pc?.getReceivers().find(r => r.track?.kind === 'audio')?.track ?? null;
-      setWebrtcDebug({
-        signaling: pc?.signalingState ?? '—',
-        ice: pc?.iceConnectionState ?? '—',
-        conn: pc?.connectionState ?? '—',
-        audio: audioTrack ? audioTrack.readyState : pc ? 'no audio track' : '—',
-      });
+      if (!cancelled) {
+        setWebrtcDebug({
+          signaling: pc?.signalingState ?? '—',
+          ice: pc?.iceConnectionState ?? '—',
+          conn: pc?.connectionState ?? '—',
+          audio: audioTrack ? audioTrack.readyState : pc ? 'no audio track' : '—',
+        });
+      }
     };
     readWebRTC();
     const webrtcId = setInterval(readWebRTC, 1000);
 
     return () => {
       cancelled = true;
-      clearInterval(statsId);
       clearInterval(webrtcId);
     };
   }, [showSettings, settingsTab, pcRef]);
@@ -1527,6 +1539,52 @@ export default function App() {
 
           {/* Stats: polled from /api/system-stats while the Telemetry tab is open */}
           <div className="space-y-3" style={{ display: telemetryTab === 'stats' ? 'block' : 'none' }}>
+            {/* System stats: VPS CPU load and RAM usage */}
+            <div className="space-y-3" style={{ display: telemetryTab === 'stats' ? 'block' : 'none' }}>
+              {systemStats ? (
+                <>
+                  <div>
+                    <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
+                      <span>CPU Load (1m)</span>
+                      <span>
+                        {(systemStats.cpuLoad[0] ?? 0).toFixed(2)} / {systemStats.cores} cores
+                      </span>
+                    </div>
+                    <div className="w-full h-2 rounded-full" style={{ background: 'var(--surface-2)' }}>
+                      <div
+                        className="h-2 rounded-full"
+                        style={{
+                          width: `${Math.min(100, Math.round(((systemStats.cpuLoad[0] ?? 0) / Math.max(1, systemStats.cores)) * 100))}%`,
+                          background: 'var(--primary)',
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
+                      <span>RAM Used / Total</span>
+                      <span>
+                        {systemStats.totalMemMB - systemStats.freeMemMB} / {systemStats.totalMemMB} MB
+                      </span>
+                    </div>
+                    <div className="w-full h-2 rounded-full" style={{ background: 'var(--surface-2)' }}>
+                      <div
+                        className="h-2 rounded-full"
+                        style={{
+                          width: `${Math.min(100, Math.round(((systemStats.totalMemMB - systemStats.freeMemMB) / Math.max(1, systemStats.totalMemMB)) * 100))}%`,
+                          background: 'var(--primary)',
+                        }}
+                      />
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <span className="text-xs" style={{ color: 'var(--muted)' }}>
+                  Waiting for /api/system-stats…
+                </span>
+              )}
+            </div>
+
             {/* Stats: live WebRTC getStats() values, updated every 1s */}
             <div className="space-y-3" style={{ display: telemetryTab === 'stats' ? 'block' : 'none' }}>
               {rtpStats.fps !== null || rtpStats.bitrateKbps !== null ? (
