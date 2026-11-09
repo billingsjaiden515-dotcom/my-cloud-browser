@@ -19,6 +19,8 @@ interface BrowserViewportProps {
   selectedBrowser: string;
   /** Live launch-pad status text from the WebRTC connection states (null = nothing to show). */
   loadingStage: string | null;
+  /** Video scaling mode: 'cover' | 'contain' | 'fill'. */
+  videoScale: 'cover' | 'contain' | 'fill';
 }
 
 // Keys that need to be prevented from triggering browser shortcuts
@@ -41,7 +43,7 @@ const KEY_MAP: Record<string, string> = {
 // Track which modifiers are currently held down
 const MODIFIER_KEYS = new Set(['Control', 'Shift', 'Alt', 'Meta']);
 
-export function BrowserViewport({ api, connectionState, videoRef, immersive, volume, bass, treble, isConnecting, selectedBrowser, loadingStage }: BrowserViewportProps) {
+export function BrowserViewport({ api, connectionState, videoRef, immersive, volume, bass, treble, isConnecting, selectedBrowser, loadingStage, videoScale }: BrowserViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const isConnected = connectionState === 'connected';
   // Track drag state: which button is currently held down
@@ -147,7 +149,8 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
     // object-fit: cover keeps 1920x1080 at a perfect aspect ratio. Compute
     // the cropped dimensions and centre offset so clicks land exactly on the
     // visible content, even when the container aspect ratio differs from
-    // 16:9.
+    // 16:9. For 'contain', the video letterboxes with black bars outside the
+    // content, so clicks map to the full 1920x1080 region (offsets = 0).
     const videoRatio = 1920 / 1080;
     const containerRatio = rect.width / rect.height;
     let offsetX = 0;
@@ -155,14 +158,16 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
     let actualWidth = rect.width;
     let actualHeight = rect.height;
 
-    if (containerRatio > videoRatio) {
-      // Container is wider than video. Video fits height, crops left/right.
-      actualWidth = rect.height * videoRatio;
-      offsetX = (rect.width - actualWidth) / 2;
-    } else {
-      // Container is taller than video. Video fits width, crops top/bottom.
-      actualHeight = rect.width / videoRatio;
-      offsetY = (rect.height - actualHeight) / 2;
+    if (videoScale !== 'contain') {
+      if (containerRatio > videoRatio) {
+        // Container is wider than video. Video fits height, crops left/right.
+        actualWidth = rect.height * videoRatio;
+        offsetX = (rect.width - actualWidth) / 2;
+      } else {
+        // Container is taller than video. Video fits width, crops top/bottom.
+        actualHeight = rect.width / videoRatio;
+        offsetY = (rect.height - actualHeight) / 2;
+      }
     }
 
     const scaleX = 1920 / actualWidth;
@@ -172,7 +177,7 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
       x: Math.max(0, Math.min(1920, Math.floor((e.clientX - rect.left - offsetX) * scaleX))),
       y: Math.max(0, Math.min(1080, Math.floor((e.clientY - rect.top - offsetY) * scaleY))),
     };
-  }, [videoRef]);
+  }, [videoRef, videoScale]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (!isConnected) return;
@@ -341,13 +346,14 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
         transition={{ duration: 0.5, ease: 'easeOut' }}
         style={{
           display: isConnected ? 'block' : 'none',
-          // Fill the container completely — the 1920x1080 stream is stretched
-          // (non-uniformly if needed) to cover every pixel, so there are no
-          // black bars and nothing is cropped. Click math uses independent X/Y
-          // scale factors to map onto this stretched content.
+          // object-fit: cover keeps the 1920x1080 stream at a perfect aspect
+          // ratio (no distortion, no black bars). It fits the container and
+          // crops overflow on the sides or top/bottom as needed. Click math
+          // below compensates for the cropped edges so clicks always land on
+          // the visible content.
           width: '100%',
           height: '100%',
-          objectFit: 'cover',
+          objectFit: videoScale,
           objectPosition: 'center',
         }}
         onMouseDown={handleMouseDown}
