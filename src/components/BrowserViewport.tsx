@@ -128,19 +128,13 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
     return () => video.removeEventListener('click', resumeIfSuspended);
   }, [videoRef]);
 
-  // Sizing: the video FILLS its container 100%x100% with object-fit 'cover'
-  // (top-left anchored). Rationale: an aspect-preserving "fit" box can never
-  // fill the container — any aspect mismatch between the container and the
-  // streamed capture (api.geometry) leaves the container's dark background
-  // visible around the video, which IS the "letterbox bars" users see. Cover
-  // scales uniformly (no distortion) to fill completely, cropping only the
-  // bottom/right page overflow; the chrome (tab strip) is anchored at the top
-  // and is never cropped. getRelativeCoords() below mirrors cover math
-  // (max-scale, top-left anchored) so clicks stay 1:1 with the stream.
+  // Sizing: the video STRETCHES to fill its container 100%x100% with
+  // object-fit 'fill'. The 1920x1080 stream is stretched (non-uniformly if
+  // needed) to cover every pixel of the container — there are no black bars
+  // and nothing is cropped. getRelativeCoords() below mirrors this by mapping
+  // each axis with its own independent scale factor.
   // NOTE: no ResizeObserver / fitSize state here on purpose — sizing is pure
-  // CSS (100%/cover) and never triggers React re-renders. A previous
-  // ResizeObserver-based fit box caused constant re-renders (flicker) and
-  // still couldn't fill the container.
+  // CSS (100%/fill) and never triggers React re-renders.
 
   // NOTE: Coordinate mapping deliberately maps to the CAPTURE/video frame (which in
   // headful mode includes the browser chrome at the top). The server translates
@@ -151,15 +145,15 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
     if (!video) return { x: 0, y: 0 };
 
     const rect = video.getBoundingClientRect();
-    // object-fit: contain letterboxes the 1920x1080 capture inside the video
-    // element (black bars on the sides or top/bottom). Map each axis by its
-    // own scale so clicks land on the real content, not on letterbox bars.
+    // object-fit: fill stretches the 1920x1080 capture to fill the video
+    // element, potentially non-uniformly. Map each axis by its own independent
+    // scale so clicks land exactly on the stretched content.
     const scaleX = 1920 / rect.width;
     const scaleY = 1080 / rect.height;
 
     return {
-      x: Math.max(0, Math.min(1920, Math.round((e.clientX - rect.left) * scaleX))),
-      y: Math.max(0, Math.min(1080, Math.round((e.clientY - rect.top) * scaleY))),
+      x: Math.max(0, Math.min(1920, Math.floor((e.clientX - rect.left) * scaleX))),
+      y: Math.max(0, Math.min(1080, Math.floor((e.clientY - rect.top) * scaleY))),
     };
   }, [videoRef]);
 
@@ -330,17 +324,13 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
         transition={{ duration: 0.5, ease: 'easeOut' }}
         style={{
           display: isConnected ? 'block' : 'none',
-          // Fill the container completely — no letterbox bars. Uniform scale
-          // (no distortion); bottom/right page overflow is cropped, chrome is
-          // top-anchored and never cropped. See getRelativeCoords for matching
-          // click mapping.
+          // Fill the container completely — the 1920x1080 stream is stretched
+          // (non-uniformly if needed) to cover every pixel, so there are no
+          // black bars and nothing is cropped. Click math uses independent X/Y
+          // scale factors to map onto this stretched content.
           width: '100%',
           height: '100%',
-          // object-fit: contain keeps the 1920x1080 capture at a perfect 16:9
-          // aspect ratio, letterboxing with black bars instead of stretching.
-          // Stretching distorts the frame and breaks click mapping.
-          objectFit: 'contain',
-          objectPosition: 'center',
+          objectFit: 'fill',
         }}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
