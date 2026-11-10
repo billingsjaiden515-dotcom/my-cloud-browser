@@ -73,7 +73,7 @@ sleep 2
 rm -f /tmp/.X99-lock
 
 # Start Xvfb with larger display to fit headful Chromium window with decorations
-Xvfb :99 -screen 0 1920x1080x24 &
+Xvfb :99 -screen 0 1920x1200x24 &
 sleep 1
 
 # Verify Xvfb started
