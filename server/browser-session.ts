@@ -28,18 +28,18 @@ export interface TabInfo {
 /**
  * Target browser window size, in Xvfb screen pixels.
  *
- * x11grab captures the FULL 1920x1200 display (see startX11Capture), so a
+ * x11grab captures the FULL 1920x1080 display (see startX11Capture), so a
  * window smaller than that leaves a black desktop border in the stream. Every
  * browser is opened at this size so they all look identical: Chromium and
  * Brave via --window-size, Firefox via -width/-height. Keep all three in step.
  *
- * The capture region is 1920x1200 and every browser is sized to the full
+ * The capture region is 1920x1080 and every browser is sized to the full
  * display -- no right-edge gap for Chromium, Brave, Vivaldi or Opera, and no
  * right-edge gap for Firefox either. The only intentional black strip is the
  * bottom (the Cloud Browser UI), which is deliberately excluded from capture.
  */
 const WANTED_WIN_W = 1920;
-const WANTED_WIN_H = 1200;
+const WANTED_WIN_H = 1080;
 
 /**
  * `xdotool search --class` window classes per browser.
@@ -122,7 +122,7 @@ const CHROME_TOP_FALLBACK: Record<string, number> = {
   vivaldi: 124,    // estimate: matches Opera's measured chromeTop=124
   firefox: 88,     // estimate: Gecko tab bar + toolbar, taller than Blink's
   librewolf: 88,   // same Gecko chrome/tab-bar as Firefox (LibreWolf is a Firefox fork)
-  zen: 88,         // OBSERVED while Zen wrongly opened 1200x720; RE-MEASURE from the [Geometry] log once the 1920x1200 xdotool fix sticks (do not guess)
+  zen: 88,         // OBSERVED while Zen wrongly opened 1200x720; RE-MEASURE from the [Geometry] log once the 1920x1080 xdotool fix sticks (do not guess)
   floorp: 88,      // estimate: Gecko chrome/tab-bar (Floorp is a Firefox fork); confirm via geometry log
   midori: 133,     // exact for this deployment: measured on VPS 2026-10-12 (page-side MATCH); the 22px sidebar is accounted via chromeLeft
   waterfox: 88,    // estimate: Gecko chrome/tab-bar (Waterfox is a Firefox fork); confirm via geometry log
@@ -253,7 +253,7 @@ export class BrowserSession {
   //
   // Pointer parking: previously this parked the X11 pointer at (1850,1000),
   // chosen to sit OUTSIDE the captured window so the cursor never appeared in
-  // the stream. Now that the capture region is the whole 1920x1200 display,
+  // the stream. Now that the capture region is the whole 1920x1080 display,
   // every point on screen is inside the capture, so there is nowhere to park it
   // that stays invisible. Hiding the cursor outright is the only way to keep it
   // out of the video: x11grab has no cursor-suppression option.
@@ -376,7 +376,7 @@ export class BrowserSession {
         // Drop Puppeteer's default about:blank arg so Firefox opens its own
         // startup page instead of a blank screen.
         ignoreDefaultArgs: ['about:blank'],
-        args: ['-width=1920', '-height=1200'],
+        args: ['-width=1920', '-height=1080'],
         extraPrefsFirefox: {
           'browser.shell.checkDefaultBrowser': false,
           // Force the startup URL to about:home (not about:blank). These prefs
@@ -461,21 +461,21 @@ export class BrowserSession {
           '--disable-popup-blocking',
           `--window-position=0,0`,
           // Window size is now matched to the capture region. x11grab captures
-          // the FULL 1920x1200 display, so a 1280x880 window leaves a large
+          // the FULL 1920x1080 display, so a 1280x880 window leaves a large
           // black desktop border in the stream. Firefox is already launched
           // at 1900x1060 for the same reason; this makes every browser look
           // the same. Keep this in step with the capture region
-          // (1920x1200) and with Firefox's -width/-height above.
+          // (1920x1080) and with Firefox's -width/-height above.
           //
-          // 1920x1200 matches the Xvfb display exactly so there is no right-edge
+          // 1920x1080 matches the Xvfb display exactly so there is no right-edge
           // black strip in the stream. Chromium and the Blink-based browsers
           // accept --window-size=1920,1200 without complaint; the window border
           // shadow is outside the capture region and is not clipped here.
-          '--window-size=1920,1200',
+          '--window-size=1920,1080',
           // Start maximized so the window fills the display and the window
           // manager has no off-screen room to drag it into when a titlebar
           // click is misread as a drag (the "screen shift" bug). Keep this in
-          // step with the 1920x1200 capture region above.
+          // step with the 1920x1080 capture region above.
           '--start-maximized',
           // Show tab strip in headful mode. SuppressUnsupportedFlagWarning now
           // rides along in `disableFeatures` above -- it must NOT be repeated
@@ -503,14 +503,14 @@ export class BrowserSession {
       if (!this.stopping) this.markDead('browser process disconnected (crashed or killed)');
     });
 
-    // Force the window to exactly 1920x1200 at position 0,0 once the
+    // Force the window to exactly 1920x1080 at position 0,0 once the
     // Chromium process is up. --window-size pins the content area at startup,
     // but a running window manager can drift the outer frame; this makes sure
     // the Xvfb display is covered with no black border on any side.
     // xdotool is present on the target host (installed with the devcontainer
     // and the VPS image); failures are best-effort and never block session start.
     setTimeout(() => {
-      exec('xdotool search --sync --onlyvisible --class "chromium" windowsize 1920 1200 windowmove 0 0');
+      exec('xdotool search --sync --onlyvisible --class "chromium" windowsize 1920 1080 windowmove 0 0');
     }, 1000);
 
     const tabId = this.getPageId(page);
@@ -1165,18 +1165,18 @@ export class BrowserSession {
     // strip, so a window-sized region could start below the tabs and silently
     // cut them off. The display cannot cut off anything above the window.
     //
-    // Chromium is unaffected: its window is 1280x880 inside a 1920x1200 root,
+    // Chromium is unaffected: its window is 1280x880 inside a 1920x1080 root,
     // so the stream simply gains the surrounding desktop. That is the
     // trade-off of this approach and it is deliberate.
     //
-    // CPU COST: this feeds the encoder 1920x1200 instead of 1280x880 -- 2.46M
+    // CPU COST: this feeds the encoder 1920x1080 instead of 1280x880 -- 2.07M
     // pixels/frame vs 1.13M, ~2.2x the MJPEG encode, JPEG decode and VP8
     // encode on a 2-vCore box that is already the bottleneck. The encoder
     // restarts itself once on the first frame to pick up the new size
     // (webrtc-streamer.ts:304-318), so it is handled, but this is a real
     // increase in per-frame cost and is the main thing to watch after deploy.
     const DISPLAY_W = 1920;
-    const DISPLAY_H = 1200;
+    const DISPLAY_H = 1080;
     // Measured window geometry is still logged for diagnosis, and still
     // required for click routing (x11Click) and chrome offsets, but it no
     // longer determines the capture rectangle.
@@ -1511,7 +1511,7 @@ export class BrowserSession {
       break;
     }
 
-    // Clamp the capture region to the Xvfb display (1920x1200).
+    // Clamp the capture region to the Xvfb display (1920x1080).
     //
     // Size: a window larger than the display (or a stale 1900x1053 Firefox on a
     // smaller screen) must be cropped to the display, or ffmpeg fails to grab
@@ -1525,7 +1525,7 @@ export class BrowserSession {
     // x+w and y+h still fit INSIDE it. Clamping the origin without shrinking
     // the size would just move the crop.
     const DISPLAY_W = 1920;
-    const DISPLAY_H = 1200;
+    const DISPLAY_H = 1080;
     const rawW = this.winW;
     const rawH = this.winH;
     const rawX = this.winX;
@@ -1556,7 +1556,7 @@ export class BrowserSession {
    * Why this exists: `--window-size` is applied at startup, but a running
    * window manager (openbox) can re-place the window afterwards, and Chromium
    * sometimes falls back to its default size under Xvfb. The capture region is
-   * the full 1920x1200 display, so a window that silently stayed 1280x880 shows
+   * the full 1920x1080 display, so a window that silently stayed 1280x880 shows
    * up as a black desktop border in the stream. Verifying beats assuming.
    *
    * Zen exposed two weaknesses in the original fire-and-forget version (VPS,
@@ -1850,7 +1850,7 @@ export class BrowserSession {
    *
    * The page's hover state is driven by Puppeteer's virtual mouse, so the real
    * pointer position is irrelevant to interaction -- but it is NOT irrelevant to
-   * the stream. Since capture now covers the whole 1920x1200 display there is
+   * the stream. Since capture now covers the whole 1920x1080 display there is
    * no off-screen parking spot left, so the cursor image is blanked instead.
    * x11grab has no cursor-suppression option, so blanking is the only lever.
    *

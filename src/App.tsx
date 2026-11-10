@@ -220,7 +220,7 @@ export default function App() {
   const [settingsTab, setSettingsTab] = useState<'appearance' | 'audio' | 'cloaking' | 'stream' | 'telemetry'>('appearance');
 
   // Stream tab settings, persisted to localStorage.
-  const [streamResolution, setStreamResolution] = useState<string>('1920x1200');
+  const [streamResolution, setStreamResolution] = useState<string>('1920x1080');
   const [streamBitrate, setStreamBitrate] = useState<'low' | 'medium' | 'high'>('high');
 
   const [telemetryTab, setTelemetryTab] = useState<'debug' | 'specs' | 'stats'>('debug');
@@ -1229,8 +1229,8 @@ export default function App() {
               <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--muted)' }}>
                 <span>Target Resolution</span>
                 <span>
-                  {streamResolution === '1920x1200'
-                    ? '1920x1200'
+                  {streamResolution === '1920x1080'
+                    ? '1920x1080'
                     : streamResolution === '1280x720'
                       ? '1280x720'
                       : '854x480'}
@@ -1245,7 +1245,7 @@ export default function App() {
                 className="w-full bg-surface-2 border rounded-lg text-xs cursor-pointer"
                 style={{ borderColor: 'var(--border)', color: 'var(--text)', borderRadius: '0.5rem' }}
               >
-                <option value="1920x1200">1920x1200 (Full HD+)</option>
+                <option value="1920x1080">1920x1080 (Full HD)</option>
                 <option value="1280x720">1280x720 (HD)</option>
                 <option value="854x480">854x480 (SD)</option>
               </select>
@@ -1530,7 +1530,7 @@ export default function App() {
             </div>
             <div className="flex justify-between text-xs">
               <span style={{ color: 'var(--muted)' }}>Resolution</span>
-              <span>1920x1200</span>
+              <span>1920x1080</span>
             </div>
             <div className="flex justify-between text-xs gap-3">
               <span style={{ color: 'var(--muted)' }}>Capture Pipeline</span>
