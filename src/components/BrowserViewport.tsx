@@ -137,10 +137,10 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
     if (!video) return { x: 0, y: 0 };
 
     const rect = video.getBoundingClientRect();
-    // Stretch: map to the full 1920x1080 capture frame with simple independent
+    // Stretch: map to the full 1920x1200 capture frame with simple independent
     // X/Y scaling and no offset math.
     const scaleX = 1920 / rect.width;
-    const scaleY = 1080 / rect.height;
+    const scaleY = 1200 / rect.height;
 
     return {
       x: Math.floor((e.clientX - rect.left) * scaleX),
@@ -293,9 +293,9 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
   }, [isConnected, api]);
 
   // NOTE: Viewport resizing removed. In headful mode (Xvfb) the Chromium
-  // window has a fixed 1280x800 size. CSS object-contain scales the video
-  // for display. Calling setViewport would physically resize the X11 window
-  // and trigger a resize feedback loop.
+  // window has a fixed size set by --window-size at launch. CSS object-fit
+  // stretches the video for display. Calling setViewport would physically
+  // resize the X11 window and trigger a resize feedback loop.
 
   return (
     <div
