@@ -458,6 +458,25 @@ else
 XML
   echo "  openbox rc.xml: titlebar drag disabled"
 
+  # openbox user config: undecorate all windows so the browser fills the screen
+  mkdir -p ~/.config/openbox
+  cat > ~/.config/openbox/rc.xml <<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+  <applications>
+    <application class="*">
+      <decor>no</decor>
+      <maximized>yes</maximized>
+      <position>
+        <x>0</x>
+        <y>0</y>
+      </position>
+    </application>
+  </applications>
+</openbox_config>
+XML
+  echo "  openbox user rc.xml: window decorations disabled"
+
   # xfwm4 (the WM actually started by this script): best-effort disable of
   # titlebar drags via xfconf. Swallowed if the channel/key isn't supported.
   if command -v xfconf-query >/dev/null 2>&1; then
