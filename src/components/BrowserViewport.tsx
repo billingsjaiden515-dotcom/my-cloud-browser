@@ -137,10 +137,10 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
     if (!video) return { x: 0, y: 0 };
 
     const rect = video.getBoundingClientRect();
-    // Stretch: map to the full 1920x1080 capture frame with simple independent
+    // Stretch: map to the full 1920x1200 capture frame with simple independent
     // X/Y scaling and no offset math.
     const scaleX = 1920 / rect.width;
-    const scaleY = 1080 / rect.height;
+    const scaleY = 1200 / rect.height;
 
     return {
       x: Math.floor((e.clientX - rect.left) * scaleX),
