@@ -55,6 +55,7 @@ export interface RemoteBrowserApi {
   sendMouseDoubleClick: (x: number, y: number, button?: 'left' | 'right' | 'middle') => Promise<void>;
   sendMouseMove: (x: number, y: number) => Promise<void>;
   sendMouseScroll: (x: number, y: number, deltaX: number, deltaY: number) => Promise<void>;
+  sendMouseAction: (payload: { action: 'move' | 'down' | 'up' | 'click' | 'scroll'; nx: number; ny: number; button?: 'left' | 'right' | 'middle'; deltaX?: number; deltaY?: number }) => Promise<void>;
   sendKeyDown: (key: string) => Promise<void>;
   sendKeyUp: (key: string) => Promise<void>;
   sendKeyPress: (key: string) => Promise<void>;
@@ -62,6 +63,8 @@ export interface RemoteBrowserApi {
   setAudioBitrate: (bps: number) => Promise<void>;
   // Live RTCPeerConnection ref (read by the Telemetry > Debug panel).
   pcRef: React.RefObject<RTCPeerConnection | null>;
+  // WebRTC data channel for cursor_change and mouse_action messages.
+  dataChannelRef: React.RefObject<RTCDataChannel | null>;
 }
 
 export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): RemoteBrowserApi {
@@ -78,6 +81,7 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
   const [geometry, setGeometry] = useState<{ width: number; height: number } | null>(null);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
+  const dataChannelRef = useRef<RTCDataChannel | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -419,6 +423,20 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
     pc.addTransceiver('video', { direction: 'recvonly' });
     pc.addTransceiver('audio', { direction: 'recvonly' });
 
+    // Create a data channel for cursor_change (server→client) and
+    // mouse_action (client→server) messages.
+    const dc = pc.createDataChannel('browser-control', { ordered: true });
+    dc.onopen = () => {
+      console.log('[Client] Data channel opened');
+    };
+    dc.onerror = (e) => {
+      console.warn('[Client] Data channel error:', e);
+    };
+    dc.onclose = () => {
+      console.log('[Client] Data channel closed');
+    };
+    dataChannelRef.current = dc;
+
     pcRef.current = pc;
 
     // Create a silent audio sender so maxBitrate can be controlled client-side.
@@ -709,6 +727,24 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
   const sendMouseMove = useCallback((x: number, y: number) =>
     sendInput('mouse', { action: 'move', x, y }), [sendInput]);
 
+  const sendMouseAction = useCallback(async (payload: {
+    action: 'move' | 'down' | 'up' | 'click' | 'scroll';
+    nx: number;
+    ny: number;
+    button?: 'left' | 'right' | 'middle';
+    deltaX?: number;
+    deltaY?: number;
+  }) => {
+    // Send via data channel if available, otherwise fall back to HTTP
+    const dc = dataChannelRef.current;
+    if (dc && dc.readyState === 'open') {
+      dc.send(JSON.stringify({ type: 'mouse_action', ...payload }));
+      return;
+    }
+    // Fall back to HTTP endpoint
+    return sendInput('mouse_action', payload as any);
+  }, [sendInput, dataChannelRef]);
+
   const sendMouseScroll = useCallback((x: number, y: number, deltaX: number, deltaY: number) =>
     sendInput('mouse', { action: 'scroll', x, y, deltaX, deltaY }), [sendInput]);
 
@@ -767,5 +803,7 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
     setAudioBitrate,
     // Exposed for the Telemetry > Debug panel (ICE / signaling state display).
     pcRef,
+    dataChannelRef,
+    sendMouseAction,
   };
 }

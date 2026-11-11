@@ -2,7 +2,7 @@ import { useRef, useState, useCallback, useEffect } from 'react';
 import {
   Play, Square, X, Maximize2, Minimize2, Settings, Sun, Moon,
   Monitor, Eye, EyeOff, AlertCircle, Globe, Loader2, Volume2, SlidersHorizontal,
-  Activity,
+  Activity, ArrowLeft, ArrowRight, RotateCcw,
 } from 'lucide-react';
 import { useRemoteBrowser } from '@/hooks/useRemoteBrowser';
 import { BrowserViewport } from '@/components/BrowserViewport';
@@ -854,6 +854,21 @@ export default function App() {
     api.navigate(url);
   }, [api, urlInput, isConnected]);
 
+  const handleGoBack = useCallback(async () => {
+    if (!isConnected) return;
+    api.goBack();
+  }, [api]);
+
+  const handleGoForward = useCallback(async () => {
+    if (!isConnected) return;
+    api.goForward();
+  }, [api]);
+
+  const handleReload = useCallback(async () => {
+    if (!isConnected) return;
+    api.reload();
+  }, [api]);
+
   // Browser logo component - supports SVG and PNG icons
   const BrowserLogo = ({ name, size = 16 }: { name: string; size?: number }) => {
     // Edge uses a favicon.run URL; Vivaldi and Opera ship PNG icons directly;
@@ -925,6 +940,34 @@ export default function App() {
                   borderColor: 'var(--border)',
                 }}
               >
+                {/* Navigation buttons on the left of the search input */}
+                <button
+                  onClick={handleGoBack}
+                  disabled={!isConnected}
+                  title="Back"
+                  className="flex items-center justify-center w-6 h-6 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                  style={{ color: 'var(--muted)', background: 'transparent' }}
+                >
+                  <ArrowLeft className="w-3 h-3" />
+                </button>
+                <button
+                  onClick={handleGoForward}
+                  disabled={!isConnected}
+                  title="Forward"
+                  className="flex items-center justify-center w-6 h-6 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                  style={{ color: 'var(--muted)', background: 'transparent' }}
+                >
+                  <ArrowRight className="w-3 h-3" />
+                </button>
+                <button
+                  onClick={handleReload}
+                  disabled={!isConnected}
+                  title="Refresh"
+                  className="flex items-center justify-center w-6 h-6 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                  style={{ color: 'var(--muted)', background: 'transparent' }}
+                >
+                  <RotateCcw className="w-3 h-3" />
+                </button>
                 <Globe className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--muted)' }} />
                 <input
                   type="text"

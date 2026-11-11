@@ -165,14 +165,15 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
     if (!isConnected) return;
     e.preventDefault();
     containerRef.current?.focus();
-    const { x, y } = getRelativeCoords(e);
+    const { x, y, nx, ny } = getRelativeCoords(e);
     const button = e.button === 2 ? 'right' : e.button === 1 ? 'middle' : 'left';
     // Guard: ignore a repeat press of the SAME button while it's already held
     // (synthetic repeats / double-fire) — a second down would desync the
     // server's virtual mouse ("'left' is already pressed").
     if (dragRef.current?.button === button) return;
     dragRef.current = { button };
-    api.sendMouseDown(x, y, button);
+    // Send mouse_action with normalized percentages (0.0-1.0)
+    api.sendMouseAction({ action: 'down', nx, ny, button });
     // Attach window-level listeners for reliable drag tracking outside video bounds
     const onMove = (we: MouseEvent) => {
       if (!dragRef.current) return;
@@ -181,12 +182,12 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
       if (now - lastMouseMoveTime.current < 33) return;
       lastMouseMoveTime.current = now;
       const coords = getRelativeCoords(we);
-      api.sendMouseMove(coords.x, coords.y);
+      api.sendMouseAction({ action: 'move', nx: coords.nx, ny: coords.ny });
     };
     const onUp = (we: MouseEvent) => {
       if (dragRef.current) {
         const coords = getRelativeCoords(we);
-        api.sendMouseUp(coords.x, coords.y, dragRef.current.button);
+        api.sendMouseAction({ action: 'up', nx: coords.nx, ny: coords.ny, button: dragRef.current.button });
         dragRef.current = null;
       }
       window.removeEventListener('mousemove', onMove);
@@ -201,7 +202,7 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
     e.preventDefault();
     if (dragRef.current) {
       const coords = getRelativeCoords(e);
-      api.sendMouseUp(coords.x, coords.y, dragRef.current.button);
+      api.sendMouseAction({ action: 'up', nx: coords.nx, ny: coords.ny, button: dragRef.current.button });
       dragRef.current = null;
     }
     // Window-level listeners are removed by the onUp callback itself
@@ -212,7 +213,7 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
     e.preventDefault();
     const coords = getRelativeCoords(e);
     const button = e.button === 2 ? 'right' : e.button === 1 ? 'middle' : 'left';
-    api.sendMouseDoubleClick(coords.x, coords.y, button);
+    api.sendMouseAction({ action: 'click', nx: coords.nx, ny: coords.ny, button });
   }, [isConnected, getRelativeCoords, api]);
 
   const lastMouseMoveTime = useRef(0);
@@ -223,7 +224,7 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
     if (now - lastMouseMoveTime.current < 33) return;
     lastMouseMoveTime.current = now;
     const coords = getRelativeCoords(e);
-    api.sendMouseMove(coords.x, coords.y);
+    api.sendMouseAction({ action: 'move', nx: coords.nx, ny: coords.ny });
   }, [isConnected, getRelativeCoords, api]);
 
   // Native NON-PASSIVE wheel listener. React 17+ attaches onWheel passively
@@ -238,7 +239,7 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const coords = getRelativeCoords(e);
-      api.sendMouseScroll(coords.x, coords.y, -e.deltaX, -e.deltaY);
+      api.sendMouseAction({ action: 'scroll', nx: coords.nx, ny: coords.ny, deltaX: -e.deltaX, deltaY: -e.deltaY });
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
@@ -315,6 +316,28 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
     return () => ro.disconnect();
   }, [sendResizeViewport]);
 
+  // FIX 1: WebRTC data channel .onmessage handler for cursor_change events.
+  // When the server detects a hardware cursor change (via xdotool), it sends
+  // { type: "cursor_change", style: "text" | "pointer" | ... } which we apply
+  // to the native video element's CSS cursor property.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const dc = api.dataChannelRef?.current;
+    if (!dc) return;
+    const onMessage = (event: MessageEvent) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'cursor_change' && msg.style) {
+          video.style.cursor = msg.style;
+          video.style.setProperty('cursor', msg.style, 'important');
+        }
+      } catch { /* ignore malformed messages */ }
+    };
+    dc.onmessage = onMessage;
+    return () => { dc.onmessage = null; };
+  }, [videoRef, api.dataChannelRef]);
+
   // FIX 3: Local cursor echo — track container-level mouse position for
   // lag-free native cursor mirror within the stream area.
   useEffect(() => {
@@ -387,16 +410,14 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
           display: isConnected ? 'block' : 'none',
           width: '100%',
           height: '100%',
-          // FIX 2 & FIX 3: Layout shift protection and cursor hiding
+          // FIX 1: cursor auto so server-controlled cursor_change can override;
+          // object-fit fill keeps 1:1 aspect ratio with no black voids.
+          cursor: 'auto !important',
+          objectFit: 'fill',
+          objectPosition: 'center',
           userSelect: 'none',
           WebkitUserSelect: 'none',
           MozUserSelect: 'none',
-          touchAction: 'none',
-          // Stretch: fill the entire video element so the whole tab strip is
-          // visible with no black bars. object-fit: fill is the inline-style
-          // equivalent of CSS `object-fit: fill`.
-          objectFit: 'fill',
-          objectPosition: 'center',
         }}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
