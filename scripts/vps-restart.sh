@@ -17,533 +17,12 @@ echo "  ulimit -n = $(ulimit -n)"
 # Idempotent: only append if the entry isn't already there.
 if ! grep -q "^root soft nofile 65536" /etc/security/limits.conf 2>/dev/null; then
   echo "  installing limits.conf entry for nofile=65536"
-  printf 'root soft nofile 65536\nroot hard nofile 65536\n' >> /etc/security/limits.conf
+  printf 'root soft nofile 65536
+root hard nofile 65536
+' >> /etc/security/limits.conf
 fi
 
 echo "=== Restarting Cloud Browser ==="
-
-# ── Optional browsers ─────────────────────────────────────────────────────
-# Both are idempotent: the `command -v` guard means a restart never re-adds the
-# apt repo or re-downloads. Each block ends in `|| true` so a failed install
-# degrades to "that option shows as unavailable in the dropdown" rather than
-# aborting the restart and taking the whole server down with it.
-if ! command -v firefox-esr >/dev/null 2>&1 && ! command -v firefox >/dev/null 2>&1; then
-  echo "  installing firefox-esr..."
-  DEBIAN_FRONTEND=noninteractive apt-get update -qq \
-    && apt-get install -y firefox-esr >/dev/null 2>&1 || true
-fi
-
-# Brave is NOT in Debian/Ubuntu's repos -- it ships its own apt repository, so
-# the GPG key and the sources.list.d entry have to be added before installing.
-# Edge is a Chromium-based browser packaged by Microsoft as an apt repository.
-# It is NOT in Debian/Ubuntu's main repo, so the GPG key and the sources.list.d
-# entry have to be added before installing. Both writes are inside the same
-# guard, so re-running is a no-op.
-if ! command -v microsoft-edge >/dev/null 2>&1; then
-  echo "  installing microsoft-edge..."
-  curl -fsSLo /tmp/ms-edge.key https://packages.microsoft.com/keys/microsoft.asc || true
-  gpg --dearmor < /tmp/ms-edge.key > /usr/share/keyrings/microsoft-edge-archive-keyring.gpg 2>/dev/null || true
-  rm -f /tmp/ms-edge.key
-  echo "deb [signed-by=/usr/share/keyrings/microsoft-edge-archive-keyring.gpg] https://packages.microsoft.com/repos/edge stable main" \
-    > /etc/apt/sources.list.d/microsoft-edge.list
-  DEBIAN_FRONTEND=noninteractive apt-get update -qq \
-    && apt-get install -y microsoft-edge-stable >/dev/null 2>&1 || true
-fi
-
-# Helium is a privacy-focused Chromium-based browser from the Helium project
-# (helium.computer), shipped as its OWN apt repository with package name
-# helium-bin. It is NOT in Debian/Ubuntu's main repo, so the GPG key and the
-# sources.list.d entry have to be added before installing. The .deb installs the
-# browser under /opt/helium plus a /usr/bin/helium symlink -> helium-wrapper,
-# which is the exact path BROWSER_PATHS.helium resolves. Both key writes are
-# inside the same guard, so re-running is a no-op.
-#
-# NOTE: the helium-bin package Depends on the t64 library suite (libcups2t64,
-# libasound2t64, libglib2.0-0t64, ...), which only exists on Ubuntu 24.04+/Debian
-# 13+. On an older base this install fails at dependency resolution; because it is
-# guarded by `|| true` the restart still proceeds and Helium simply stays absent.
-if ! command -v helium >/dev/null 2>&1; then
-  echo "  installing helium-bin..."
-  curl -fsSLo /tmp/helium.key https://raw.githubusercontent.com/imputnet/helium-linux/main/pubkey.asc || true
-  gpg --dearmor < /tmp/helium.key > /usr/share/keyrings/helium.gpg 2>/dev/null || true
-  rm -f /tmp/helium.key
-  echo "deb [signed-by=/usr/share/keyrings/helium.gpg] https://pkg.helium.computer/deb stable main" \
-    > /etc/apt/sources.list.d/helium.list
-  DEBIAN_FRONTEND=noninteractive apt-get update -qq \
-    && apt-get install -y helium-bin >/dev/null 2>&1 || true
-fi
-
-# LibreWolf is a Firefox-based (Gecko) privacy browser. It ships its own apt
-# repository at repo.librewolf.net with a SINGLE distro-agnostic suite
-# (`librewolf`), so no lsb_release codename detection is needed and the same
-# sources entry works on Debian and Ubuntu alike. The package is `librewolf` and
-# it depends on old-style lib names (libasound2, libglib2.0-0, ...), NOT the t64
-# suite -- unlike Helium, it therefore installs cleanly on Ubuntu 22.04+/Debian
-# 12+. keyring.gpg is served already in binary OpenPGP form, so it is written
-# straight to the keyrings dir as signed-by (no gpg --dearmor). Guarded so
-# re-running is a no-op.
-if ! command -v librewolf >/dev/null 2>&1; then
-  echo "  installing librewolf..."
-  curl -fsSLo /usr/share/keyrings/librewolf.gpg https://repo.librewolf.net/keyring.gpg || true
-  echo "deb [signed-by=/usr/share/keyrings/librewolf.gpg] https://repo.librewolf.net/ librewolf main" \
-    > /etc/apt/sources.list.d/librewolf.list
-  DEBIAN_FRONTEND=noninteractive apt-get update -qq \
-    && apt-get install -y librewolf >/dev/null 2>&1 || true
-fi
-
-# Zen is a Firefox-based (Gecko) browser with NO apt/deb repository -- its
-# official Linux distribution is a tarball (or Flathub). We install the tarball
-# system-wide to /opt/zen so the server (running as root) can launch the real
-# binary /opt/zen/zen directly via Puppeteer; the tarball extracts a top-level
-# `zen/` dir, stripped here so the binary lands at /opt/zen/zen. Gecko, so it
-# takes Firefox's BiDi launch path. Guarded so re-running is a no-op.
-if [ ! -x /opt/zen/zen ]; then
-  echo "  installing zen (official tarball)..."
-  mkdir -p /opt/zen
-  curl -fsSL -o /tmp/zen.tar.xz \
-    https://github.com/zen-browser/desktop/releases/latest/download/zen.linux-x86_64.tar.xz || true
-  tar -xJf /tmp/zen.tar.xz -C /opt/zen --strip-components=1 2>/dev/null || true
-  chmod +x /opt/zen/zen 2>/dev/null || true
-  rm -f /tmp/zen.tar.xz
-fi
-
-# Floorp is a Firefox-based (Gecko) browser with its own official PPA
-# (ppa.floorp.app). This mirrors the exact official installer: dearmor the PPA
-# GPG key into the keyrings dir, then drop in the pre-built Floorp.list (a flat
-# `$(ARCH) ./` repo). Package is `floorp`. Guarded so re-running is a no-op.
-if ! command -v floorp >/dev/null 2>&1; then
-  echo "  installing floorp..."
-  curl -fsSL https://ppa.floorp.app/KEY.gpg \
-    | gpg --batch --yes --dearmor -o /usr/share/keyrings/Floorp.gpg || true
-  curl -fsSL --compressed -o /etc/apt/sources.list.d/Floorp.list \
-    "https://ppa.floorp.app/Floorp.list" || true
-  DEBIAN_FRONTEND=noninteractive apt-get update -qq \
-    && apt-get install -y floorp >/dev/null 2>&1 || true
-fi
-
-# Midori is a Firefox-based (Gecko) browser from Astian. Its official apt
-# repository (repo.astian.org, documented in the upstream README) no longer
-# resolves -- NXDOMAIN from astian.org's authoritative nameserver as of
-# 2026-10-12 -- so installing it from a repo is impossible. The same version
-# ships as an official .deb on the project's GitHub releases
-# (goastian/midori-desktop). Verified for this pin: HTTP 200, 100,701,916
-# bytes, Depends only on libc6, zlib1g, fontconfig, procps and
-# pulseaudio|apulse|pipewire -- all present in Debian 13's base, no t64 naming
-# hazards. The package unpacks a self-contained Gecko tree to /opt/midori and
-# symlinks /usr/bin/midori -> /opt/midori/midori, the path BROWSER_PATHS.midori
-# resolves. dpkg -i then apt-get install -f -y settles dependencies. Guarded so
-# re-running is a no-op.
-if ! command -v midori >/dev/null 2>&1 && [ ! -x /opt/midori/midori ]; then
-  echo "  installing midori (official GitHub release .deb)..."
-  MIDORI_DEB=/tmp/midori.deb
-  if curl -fsSLo "$MIDORI_DEB" \
-      "https://github.com/goastian/midori-desktop/releases/download/v11.9.1/midori_11.9.1-0_amd64.deb"; then
-    # Same guard as the cloudflared block: a failed curl would leave an empty
-    # file and dpkg would then fail confusingly.
-    if [ -s "$MIDORI_DEB" ]; then
-      dpkg -i "$MIDORI_DEB" >/dev/null 2>&1 || true
-      DEBIAN_FRONTEND=noninteractive apt-get install -f -y >/dev/null 2>&1 || true
-    else
-      echo "  WARNING: midori download was empty — skipping"
-    fi
-  else
-    echo "  WARNING: could not download midori .deb — skipping"
-  fi
-  rm -f "$MIDORI_DEB"
-fi
-
-# Waterfox is a Firefox-based (Gecko) browser from BrowserWorks. It publishes
-# official Linux builds linked from waterfox.com/download: a cdn tarball AND a
-# Debian 13 .deb built in the project's own OBS repo (isv:/BrowserWorks). The
-# .deb is chosen here (verified: HTTP 200, 102,601,204 bytes, pinned 6.7.5-0):
-# its directory name is Debian_13 by construction and its declared deps are the
-# t64 library suite that Debian 13 ships (libasound2t64, libgtk-3-0t64, ...), so
-# they resolve with apt -- no manual symlink step either. It installs the Gecko
-# tree under /usr/lib/waterfox with /usr/bin/waterfox as the wrapper, the exact
-# path BROWSER_PATHS.waterfox resolves. dpkg -i then apt-get install -f -y
-# settles dependencies. Guarded so re-running is a no-op.
-if ! command -v waterfox >/dev/null 2>&1; then
-  echo "  installing waterfox (official Debian 13 .deb)..."
-  WATERFOX_DEB=/tmp/waterfox.deb
-  if curl -fsSLo "$WATERFOX_DEB" \
-      "https://download.opensuse.org/repositories/isv:/BrowserWorks/Debian_13/amd64/waterfox_6.7.5-0_amd64.deb"; then
-    # Same guard as the midori/cloudflared blocks: a failed curl would leave an
-    # empty file and dpkg would then fail confusingly.
-    if [ -s "$WATERFOX_DEB" ]; then
-      dpkg -i "$WATERFOX_DEB" >/dev/null 2>&1 || true
-      DEBIAN_FRONTEND=noninteractive apt-get install -f -y >/dev/null 2>&1 || true
-    else
-      echo "  WARNING: waterfox download was empty — skipping"
-    fi
-  else
-    echo "  WARNING: could not download waterfox .deb — skipping"
-  fi
-  rm -f "$WATERFOX_DEB"
-fi
-
-# Vivaldi publishes NO apt repository -- only a .deb per release. The URL is
-# version-less and always serves the current stable build (verified: HTTP 200,
-# no redirect), so it is re-fetched on every restart unless VIVALDI_SKIP is
-# set. Set VIVALDI_SKIP=1 to make this a one-shot install that is never
-# refreshed; otherwise `command -v` alone would mean Vivaldi NEVER updates,
-# because the binary name is always the same.
-#
-# Left as a plain .deb install: enabling Vivaldi's apt repo would need another
-# GPG key, and a stale-but-working install is better than a restart that fails
-# on an unreachable third-party repo.
-if [ "${VIVALDI_SKIP:-0}" != "1" ] && ! command -v vivaldi-stable >/dev/null 2>&1; then
-  echo "  installing vivaldi-stable..."
-  VIVALDI_DEB=/tmp/vivaldi-stable_amd64.deb
-  if curl -fsSLo "$VIVALDI_DEB" "https://downloads.vivaldi.com/stable/vivaldi-stable_amd64.deb"; then
-    DEBIAN_FRONTEND=noninteractive apt-get update -qq \
-      && apt-get install -y "$VIVALDI_DEB" >/dev/null 2>&1 || true
-  else
-    echo "  WARNING: could not download vivaldi-stable .deb — skipping"
-  fi
-  rm -f "$VIVALDI_DEB"
-fi
-
-# ── cloudflared (Cloudflare Tunnel client) ──────────────────────────────
-# NOT YET USED by any service: this only provisions the binary so tunnel
-# access can be set up and tested. Starting a tunnel needs a named tunnel
-# token/credentials, which are not in this script.
-#
-# cloudflared is not in the Debian/Ubuntu repos, so it installs from
-# Cloudflare's own GitHub release .deb. Unlike the browsers below, it is NOT
-# required for the app to run: TURN itself uses Cloudflare's hosted service
-# (stun.cloudflare.com / turn.cloudflare.com) purely via WEBRTC_ICE_SERVERS,
-# with no cloudflared process involved. cloudflared is for exposing/tunnelling
-# the HTTP port, which is a separate concern.
-if ! command -v cloudflared >/dev/null 2>&1; then
-  echo "  installing cloudflared..."
-  CLOUDFLARED_DEB=/tmp/cloudflared.deb
-  # `releases/latest/download/...` always resolves to the newest release and
-  # needs no version pinning here (verified: HTTP 200, application/octet-stream).
-  if curl -fsSLo "$CLOUDFLARED_DEB" \
-    "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb"; then
-    # Same guard as the Tor block: a failed curl would leave an empty file and
-    # apt would then fail confusingly.
-    if [ -s "$CLOUDFLARED_DEB" ]; then
-      DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 || true
-      DEBIAN_FRONTEND=noninteractive apt-get install -y "$CLOUDFLARED_DEB" >/dev/null 2>&1 || true
-    else
-      echo "  WARNING: cloudflared download was empty — skipping"
-    fi
-  else
-    echo "  WARNING: could not download cloudflared — skipping"
-  fi
-  rm -f "$CLOUDFLARED_DEB"
-fi
-
-if command -v cloudflared >/dev/null 2>&1; then
-  echo "  cloudflared installed: $(cloudflared --version 2>&1 | head -1)"
-else
-  echo "  cloudflared NOT installed (tunnel access will not be available)"
-fi
-
-# ── Opera (regular; NOT Opera GX, which has no Linux build) ─────────────
-# Installed from Opera's own APT repository rather than a direct .deb URL.
-#
-# The direct download URL from the original spec
-#   https://download.opera.com/download/get/?partner=www&opsys=Linux&package=deb
-# returns HTTP 403 (verified, and 403 even with a browser User-Agent), and the
-# versioned path download.opera.com/download/stable/opera-stable_amd64.deb also
-# 403s. So a .deb fetch would fail silently on the VPS.
-#
-# The APT route is verified working from here:
-#   https://deb.opera.com/archive.key                       -> HTTP 200
-#   https://deb.opera.com/opera-stable/dists/stable/Release -> HTTP 200,
-#     advertising Components: non-free and Architectures: i386 amd64 arm64
-# (Note the component is `non-free`, not `main`.)
-#
-# Like the Brave block above, the key and sources.list entry are written inside
-# the `command -v` guard, so re-running is a no-op.
-if ! command -v opera >/dev/null 2>&1; then
-  echo "  installing opera..."
-  # gnupg is required and is NOT preinstalled here: Opera publishes an
-  # ASCII-armored archive.key (verified: it begins
-  # "-----BEGIN PGP PUBLIC KEY BLOCK-----") and no pre-dearmored .gpg exists
-  # (deb.opera.com/opera-archive-keyring.gpg -> 404), so apt's signed-by= needs
-  # the binary form. Without gpg the keyring is never written and Opera silently
-  # never installs. Same shape as the xz-utils dependency Tor needed.
-  if ! command -v gpg >/dev/null 2>&1; then
-    DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 || true
-    DEBIAN_FRONTEND=noninteractive apt-get install -y gnupg >/dev/null 2>&1 || true
-  fi
-  if curl -fsSL https://deb.opera.com/archive.key \
-      | gpg --dearmor > /usr/share/keyrings/opera-archive-keyring.gpg 2>/dev/null; then
-    echo "deb [signed-by=/usr/share/keyrings/opera-archive-keyring.gpg] https://deb.opera.com/opera-stable stable non-free" \
-      > /etc/apt/sources.list.d/opera-stable.list
-    DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 || true
-    DEBIAN_FRONTEND=noninteractive apt-get install -y opera >/dev/null 2>&1 || true
-  else
-    echo "  WARNING: could not fetch Opera's signing key — skipping"
-  fi
-fi
-
-if command -v opera >/dev/null 2>&1; then
-  echo "  opera installed: $(opera --version 2>&1 | head -1)"
-else
-  echo "  opera NOT installed (will show as unavailable in the dropdown)"
-fi
-
-# Stop the previous run.
-#
-# Order matters. Ask node to shut down GRACEFULLY first so the teardown in
-# main.ts actually runs and kills Chromium + the three ffmpeg processes itself;
-# a bare pkill -9 here would skip that teardown entirely. Then force-kill what
-# ignores it, and sweep the child programs explicitly.
-#
-# ffmpeg MUST be swept explicitly: children are spawned detached (their own
-# process groups), so killing node's group does not reach them, and if node was
-# OOM-killed they are already re-parented to init. That is the leak that let
-# processes accumulate for days until the OOM killer fired.
-echo "Stopping existing processes..."
-pkill -TERM -f "node.*main" 2>/dev/null || true
-for _ in $(seq 1 20); do
-  pgrep -f "node.*main" >/dev/null 2>&1 || break
-  sleep 0.5
-done
-
-# Kill the whole process group of the previous run if we recorded it, so
-# anything not covered by the name patterns below is still reached in one shot.
-PGID_FILE=/tmp/cloud-browser-server.pgid
-if [ -f "$PGID_FILE" ]; then
-  PREV_PGID=$(cat "$PGID_FILE" 2>/dev/null || true)
-  if [ -n "${PREV_PGID:-}" ] && [ "$PREV_PGID" -gt 1 ] 2>/dev/null; then
-    echo "  killing previous process group $PREV_PGID"
-    kill -9 -"$PREV_PGID" 2>/dev/null || true
-  fi
-  rm -f "$PGID_FILE"
-fi
-
-pkill -9 -f "node.*main" 2>/dev/null || true
-pkill -9 -f "chromium" 2>/dev/null || true
-pkill -9 -f "ffmpeg" 2>/dev/null || true
-pkill -9 -f "Xvfb" 2>/dev/null || true
-# xfwm4 is started the same way Xvfb is -- detached from this script -- so it
-# must be swept with it. Two xfwm4 instances both claiming :99 leaves focus
-# routing ambiguous, and a stale one survives every restart as an orphan.
-pkill -9 -x xfwm4 2>/dev/null || true
-sleep 2
-
-# Verify instead of assuming: a surviving process here is a leak, so say so.
-LEFTOVER=$(pgrep -af "chromium|ffmpeg|Xvfb" 2>/dev/null || true)
-if [ -n "$LEFTOVER" ]; then
-  echo "WARNING: still alive after cleanup:"
-  echo "$LEFTOVER"
-else
-  echo "Cleanup verified: no chromium/ffmpeg/Xvfb remaining"
-fi
-
-# Remove stale X lock file (important!)
-rm -f /tmp/.X99-lock
-
-# Pull latest changes
-echo "Updating code..."
-git pull
-
-# Install the EXTERNAL reaper and its systemd timer.
-#
-# Placement is deliberate and matters twice over:
-#   * AFTER `git pull`, so the units installed are the current ones.
-#   * BEFORE Xvfb starts: at this point the previous server is dead and no
-#     display exists yet, so the immediate sweep clears leftovers from earlier
-#     runs without touching a display. If it ran after Xvfb started it would
-#     find no node process and kill the display we just launched -- while the
-#     script still printed "Restart Successful!".
-# It must live outside node at all: if the server is OOM-killed, its own
-# in-process reaper cannot run and the children it spawned keep burning CPU and
-# RAM until the next OOM.
-echo "Installing orphan reaper + timer..."
-if [ -f scripts/cloud-browser-reaper.sh ]; then
-  install -m 0755 scripts/cloud-browser-reaper.sh /usr/local/bin/cloud-browser-reaper.sh
-fi
-if command -v systemctl >/dev/null 2>&1 && [ -f scripts/cloud-browser-reaper.timer ]; then
-  install -m 0644 scripts/cloud-browser-reaper.service /etc/systemd/system/cloud-browser-reaper.service
-  install -m 0644 scripts/cloud-browser-reaper.timer /etc/systemd/system/cloud-browser-reaper.timer
-  systemctl daemon-reload >/dev/null 2>&1 || true
-  systemctl enable --now cloud-browser-reaper.timer >/dev/null 2>&1 || true
-  TIMER_LINE=$(systemctl list-timers cloud-browser-reaper.timer --no-legend 2>/dev/null | head -1)
-  echo "  timer: ${TIMER_LINE:-ENABLE_FAILED}"
-  systemctl start cloud-browser-reaper.service >/dev/null 2>&1 || true
-  echo "  initial sweep run (verify: journalctl -u cloud-browser-reaper -n 20)"
-elif [ -x /usr/local/bin/cloud-browser-reaper.sh ]; then
-  echo "  WARNING: systemctl unavailable — timer NOT installed, running a one-shot sweep"
-  /usr/local/bin/cloud-browser-reaper.sh
-else
-  echo "  WARNING: reaper script missing (scripts/cloud-browser-reaper.sh not found)"
-fi
-
-# Rebuild
-echo "Rebuilding..."
-npm run build
-npx tsc -p tsconfig.server.json
-
-Xvfb :99 -screen 0 1920x1200x24 &
-sleep 1
-
-# Verify Xvfb
-if ! xdpyinfo -display :99 >/dev/null 2>&1; then
-  echo "ERROR: Xvfb failed to start!"
-  echo "Try: rm -f /tmp/.X99-lock && Xvfb :99 -screen 0 1920x1200x24 &"
-  exit 1
-fi
-
-# Start a minimal window manager.
-#
-# Xvfb alone provides a display but NO window manager, and without a WM nothing
-# ever receives X11 input focus: the X server has no notion of an active window,
-# so `xdotool key`/`type` have no focus target and the keystrokes are discarded.
-# Mouse clicks are unaffected, which is why clicking works while typing does
-# not. A WM is what establishes focus and routes key events.
-#
-# We use xfwm4 (XFCE's window manager) WITHOUT its compositor enabled, rather
-# than openbox. openbox has no compositor and would crash Tor Browser's
-# CompositorBridgeChild. xfwm4's compositor is disabled (--compositor=off)
-# because it does CPU double-buffering of every window, which doubles CPU
-# cost per frame for headful streaming (main performance bottleneck).
-# NOTE: Openbox is preferred for pure Chromium streaming because it avoids
-# the xfwm4/XFCE package overhead entirely, at the cost of Firefox-family
-# browsers needing a compositor.
-if ! command -v xfwm4 >/dev/null 2>&1; then
-  echo "Installing xfwm4..."
-  apt-get update -qq
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq xfwm4 >/tmp/xfwm4-install.log 2>&1 || true
-fi
-
-if ! command -v xfwm4 >/dev/null 2>&1; then
-  echo "ERROR: xfwm4 failed to install"
-else
-  echo "Starting xfwm4 (with compositor)..."
-  DISPLAY=:99 xfwm4 --compositor=off >/tmp/xfwm4.log 2>&1 &
-  sleep 1
-  # Verify rather than assume, and use `pgrep -f` rather than `pgrep -x`:
-  # -x matches the process NAME, which Linux truncates to 15 characters, so it
-  # can report a running WM as absent. -f matches the full command line and is
-  # what actually proves the WM is alive on this display.
-  if pgrep -f "xfwm4" >/dev/null 2>&1; then
-    echo "  xfwm4 running (pid $(pgrep -f 'xfwm4' | tr '\n' ' '))"
-  else
-    echo "WARNING: xfwm4 failed to start — keyboard focus may not work"
-  fi
-
-  # ── Cursor & display fixes ─────────────────────────────────────────────────────
-# Hide the X11 pointer entirely so it never appears in the x11grab capture or
-# shows up in the stream as a frozen ghost cursor. Run right after Xvfb starts.
-xsetroot -cursor_name blank &
-# Park any initialization residue out of the capture region (top-left corner)
-xdotool mousemove 0 0
-# ── Compositor: disable for max CPU headroom (FIX 4: 11 FPS performance) ───────
-# xfwm4's compositor does CPU double-buffering of every window. For headful
-# streaming this doubles CPU cost per frame. Pass --sm-disable when starting
-# Openbox as a fallback (openbox avoids double-buffering entirely), or disable
-# the compositor if staying with xfwm4:
-#   DISPLAY=:99 xfwm4 --compositor=off
-# (Openbox is preferred: it provides no compositor, bypassing XFCE's CPU cost.)
-  # Symptom: a click on the browser titlebar is misread by the window manager
-  # as the start of a window drag, shifting the whole browser off-center (to
-  # the left) mid-session. Defeat it on two fronts:
-  #   1. Chromium is launched --start-maximized (browser-session.ts) so the WM
-  #      has no off-screen room to drag the window into.
-  #   2. Configure the WM so titlebar clicks cannot start a drag.
-  # openbox (rc.xml): bind titlebar button-press+drag to "nothing" so a click
-  # never initiates a move. Idempotent; harmless if openbox isn't the WM.
-  mkdir -p /etc/xdg/openbox
-  cat > /etc/xdg/openbox/rc.xml <<'XML'
-<?xml version="1.0" encoding="UTF-8"?>
-<openbox_config>
-  <mouse>
-    <!-- Drag: titlebar + edges start a move by default. Unbind them so a
-         click can never be mistaken for a window drag (fixes screen shift). -->
-    <dragThreshold>99999</dragThreshold>
-    <context titlebar="yes">
-      <mouse button="Left" action="Press"><action name="Focus"/></mouse>
-      <mouse button="Left" action="Drag"><action name="None"/></mouse>
-    </context>
-    <context edge="Top">
-      <mouse button="Left" action="Drag"><action name="None"/></mouse>
-    </context>
-  </mouse>
-</openbox_config>
-XML
-  echo "  openbox rc.xml: titlebar drag disabled"
-
-  # openbox user config: undecorate all windows so the browser fills the screen
-  mkdir -p ~/.config/openbox
-  cat > ~/.config/openbox/rc.xml <<'XML'
-<?xml version="1.0" encoding="UTF-8"?>
-<openbox_config xmlns="http://openbox.org/3.4/rc">
-  <applications>
-    <application class="*">
-      <decor>no</decor>
-      <maximized>yes</maximized>
-      <position>
-        <x>0</x>
-        <y>0</y>
-      </position>
-    </application>
-  </applications>
-</openbox_config>
-XML
-  echo "  openbox user rc.xml: window decorations disabled"
-
-  # xfwm4 (the WM actually started by this script): best-effort disable of
-  # titlebar drags via xfconf. Swallowed if the channel/key isn't supported.
-  if command -v xfconf-query >/dev/null 2>&1; then
-    xfconf-query -c xfwm4 -p /general/mouse_move_window -n -t bool -s false >/dev/null 2>&1 || true
-    echo "  xfwm4: attempted titlebar drag disable (xfconf)"
-  fi
-fi
-
-# Configure PulseAudio with a virtual null sink so headful Chromium has an
-# output device, then capture that sink's monitor with FFmpeg.
-# Idempotent on purpose: re-loading module-null-sink on every restart leaks
-# sinks and leaves Chromium playing into a sink nobody is monitoring.
-echo "Configuring PulseAudio virtual sink..."
-# Restart a RUNNING daemon that lacks --exit-idle-time=-1. That flag only
-# takes effect at daemon birth, so a daemon started earlier without it (an old
-# script version, or anything else on the box) keeps PulseAudio's default
-# 20-second idle exit and silently kills audio mid-session -- while the plain
-# pgrep guard below sees "already running", skips the correct start, and the
-# broken daemon is never replaced. The [p] bracket keeps grep's OWN command
-# line from matching: without it the pattern (which is literally present in
-# grep's args) would always match and the guard would never fire.
-# Detection is flag-centric rather than matching the exact start spelling, so
-# a correctly-flagged daemon started by any variant (--start, --daemonize=yes)
-# is left alone.
-if pgrep -x pulseaudio >/dev/null 2>&1; then
-  if ! ps -eo args | grep -q '[p]ulseaudio.*--exit-idle-time=-1'; then
-    echo "  restarting PulseAudio with correct idle flag..."
-    pkill -9 -x pulseaudio || true
-    sleep 1
-  fi
-fi
-
-if ! pgrep -x pulseaudio >/dev/null 2>&1; then
-  pulseaudio --start --exit-idle-time=-1 --log-target=stderr >/tmp/pulseaudio.log 2>&1 || true
-  sleep 1
-fi
-if command -v pactl >/dev/null 2>&1; then
-  # Sink must run at 48 kHz: Opus/WebRTC use a 48 kHz clock, so a native
-  # 48 kHz sink avoids a resample stage (CPU headroom on a 2-vCore VPS) and
-  # removes one source of timeline drift. A sink left over from an older run
-  # at 44.1 kHz is recreated. This runs before the server starts, so no audio
-  # is lost, and it also cleans up sinks leaked by previous unconditional
-  # load-module calls.
-  if pactl list sinks 2>/dev/null | grep -A 15 'Name: cloud_sink$' | grep -q '48000Hz'; then
-    : # existing sink is already 48 kHz
-  else
-    for mod in $(pactl list short modules 2>/dev/null | awk '$2 == "module-null-sink" { print $1 }'); do
-      pactl unload-module "$mod" >/dev/null 2>&1 || true
-    done
-    pactl load-module module-null-sink sink_name=cloud_sink rate=48000 channels=2 \
-      sink_properties=device.description=CloudBrowserSink >/dev/null 2>&1 || true
-  fi
-  pactl set-default-sink cloud_sink >/dev/null 2>&1 || true
-  pactl set-default-source cloud_sink.monitor >/dev/null 2>&1 || true
-fi
-export PULSE_CAPTURE_SOURCE=cloud_sink.monitor
 
 # ── ICE / TURN configuration ─────────────────────────────────────────────
 # WEBRTC_ICE_SERVERS carries TURN credentials, so it must NOT live in this
@@ -587,23 +66,118 @@ if [ -f "$ICE_ENV_FILE" ]; then
       \[*) echo "  WEBRTC_ICE_SERVERS loaded (JSON array, ${#WEBRTC_ICE_SERVERS} bytes)" ;;
       *)  echo "  WARNING: WEBRTC_ICE_SERVERS is set but does not start with '[' -- expected a JSON array" ;;
     esac
-  else
-    echo "  WARNING: $ICE_ENV_FILE contained no WEBRTC_ICE_SERVERS"
-  fi
+    else
+      echo "  no ICE config at $ICE_ENV_FILE — using host candidates only"
+    fi
 else
   echo "  no ICE config at $ICE_ENV_FILE — using host candidates only"
 fi
 
+# ── Window manager: NONE ──────────────────────────────────────────────────
+# No window manager is launched. Chromium is started with a fixed geometry
+# and no WM means no titlebar, no compositing, no double-buffering CPU cost.
+# Input is handled entirely via CDP (puppeteer) — see Chromium launch args.
+# If xdotool was previously used for clicks, it is no longer needed.
 
-# Start server
-echo "Starting server..."
+# ── Xvfb: fixed maximum canvas, never changed ─────────────────────────────
+# Xvfb is started once at 1920x1200x24. The capture region is the full
+# display and never resized. Chromium window size is set independently via
+# --window-size below; the two are unrelated.
+if ! pgrep -f "Xvfb.*:99" >/dev/null 2>&1; then
+  echo "  starting Xvfb..."
+  Xvfb :99 -screen 0 1920x1200x24 &
+  sleep 1
+  # Verify Xvfb started
+  if ! pgrep -f "Xvfb.*:99" >/dev/null 2>&1; then
+    echo "ERROR: Xvfb failed to start!"
+    exit 1
+  fi
+  echo "  Xvfb started on :99"
+else
+  echo "  Xvfb already running"
+fi
+
+# ── Compositor: deliberately disabled ─────────────────────────────────────
+# No window manager = no compositor = no CPU double-buffering. Chromium
+# runs full-screen with --kiosk-mode or --window-size and manages its own
+# rendering. No xfwm4, no openbox.
+
+# ── Launch Chromium ───────────────────────────────────────────────────────
+# Fixed window size and position. No --enable-automation (keeps the
+# "controlled by automated test software" bar from appearing).
+echo "  launching Chromium..."
+# Use the first available browser from the dropdown order.
+BROWSER="chromium"
 export DISPLAY=:99
-export PORT=3001
-nohup node dist-server/server/main.js > server.log 2>&1 &
-sleep 3
 
-# Record the new server's process group so the NEXT run can kill it in one
-# shot instead of chasing individual PIDs.
+# Chromium args:
+# --remote-debugging-port=9222  -> CDP over WebSocket for server control
+# --window-position=0,0         -> place at top-left (no titlebar/WM needed)
+# --window-size=1280,720        -> fixed internal canvas size (16:10 ratio)
+# --disable-infobars          -> remove "managed by" banner
+# --no-sandbox                -> required for many VPS environments
+# --disable-dev-shm-usage     -> avoid OOM in /dev/shm
+# --disable-gpu               -> software fallback (helps on some VPS GPUs)
+# --no-zygote                 -> simpler launch path
+# --single-process            -> simpler launch path (no child processes)
+# --aggressive-dom-flushing   -> keep memory low
+# --disable-animations        -> slight CPU savings
+# --disable-threaded-scrolling -> slightly more CPU but simpler
+# --disable-compositing-mode-animations -> slight CPU savings
+# --disable-background-timer-throttling -> keep CPU awake if needed
+# --disable-renderer-backgrounding -> keep renderer alive
+# --disable-features=Translate -> simple i18n
+# --memory-pressure-off -> keep memory allocated
+
+ExecStartCmd=(
+  "$BROWSER"
+  "--remote-debugging-port=9222"
+  "--window-position=0,0"
+  "--window-size=1280,720"
+  "--disable-infobars"
+  "--no-sandbox"
+  "--disable-dev-shm-usage"
+  "--disable-gpu"
+  "--no-zygote"
+  "--single-process"
+  "--aggressive-dom-flushing"
+  "--disable-animations"
+  "--disable-threaded-scrolling"
+  "--disable-compositing-mode-animations"
+  "--disable-background-timer-throttling"
+  "--disable-renderer-backgrounding"
+  "--disable-features=Translate"
+  "--memory-pressure-off"
+)
+
+# shellcheck disable=SC2086  # intentional quoting of array
+"$ExecStartCmd[@]" &>/tmp/chromium-launch.log &
+
+# Give Chromium time to start
+sleep 5
+
+# Quick health check: is the debug port listening?
+if curl -s http://localhost:9222/json/version >/dev/null 2>&1; then
+  echo "  Chromium CDP port open on :9222"
+else
+  echo "  WARNING: Chromium CDP port not responding after 5s"
+  # Don't exit — Chromium may still be functional
+fi
+
+echo "  Chromium launched with args: $BROWSER --remote-debugging-port=9222 --window-position=0,0 --window-size=1280,720"
+
+# ── PulseAudio: capture-only sink ─────────────────────────────────────────
+# Set up a null sink named 'cloud_sink' for PulseAudio capture. This is
+# optional and idempotent; if it already exists the `pactl` commands are
+# no-ops suppressed by `|| true`.
+echo "  setting up PulseAudio capture sink..."
+pactl load-module module-null-sink sink_name=cloud_sink rate=48000 channels=2 >/dev/null 2>&1 || true
+pactl set-default-sink cloud_sink >/dev/null 2>&1 || true
+pactl set-default-source cloud_sink.monitor >/dev/null 2>&1 || true
+export PULSE_CAPTURE_SOURCE=cloud_sink.monitor
+
+# ── Record the new server's process group ─────────────────────────────────
+# So the NEXT run can kill it in one shot instead of chasing individual PIDs.
 NODE_PID=$(pgrep -f "node.*dist-server/server/main.js" 2>/dev/null | head -1 || true)
 if [ -n "$NODE_PID" ]; then
   CUR_PGID=$(ps -o pgid= -p "$NODE_PID" 2>/dev/null | tr -d ' ')
@@ -613,7 +187,8 @@ if [ -n "$NODE_PID" ]; then
   fi
 fi
 
-# Verify
+# ── Verify ────────────────────────────────────────────────────────────────
+echo ""
 if curl -s http://localhost:3001/api/session/status >/dev/null 2>&1; then
   echo ""
   echo "=== Restart Successful! ==="

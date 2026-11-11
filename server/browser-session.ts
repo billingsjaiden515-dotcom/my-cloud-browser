@@ -28,13 +28,13 @@ export interface TabInfo {
 /**
  * Target browser window size, in Xvfb screen pixels.
  *
- * x11grab captures the FULL 1920x1200 display (see startX11Capture), so a
+ * x11grab captures the FULL display size (1920x1200 by default, or the
  * window smaller than that leaves a black desktop border in the stream. Every
  * browser is opened at this size so they all look identical: Chromium and
  * Brave via --window-size, Firefox via -width/-height. Keep all three in step.
  *
  * The capture region is the FULL display size (1920x1200 by default, or the
- * current size after a client-triggered resize_viewport message). Every
+ * current size after a client-triggered resize CDP message). Every
  * browser is sized to fill the display -- no right-edge gap for any browser
  * family, and no black border inside the capture frame. The only intentional
  * black strip is the bottom (the Cloud Browser UI), which is deliberately
@@ -385,7 +385,7 @@ export class BrowserSession {
         // Drop Puppeteer's default about:blank arg so Firefox opens its own
         // startup page instead of a blank screen.
         ignoreDefaultArgs: ['about:blank'],
-        args: ['-width=1920', '-height=1200'],
+        args: ['--window-size=1280,720'],
         extraPrefsFirefox: {
           'browser.shell.checkDefaultBrowser': false,
           // Force the startup URL to about:home (not about:blank). These prefs
