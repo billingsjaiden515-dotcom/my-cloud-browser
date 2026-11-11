@@ -48,6 +48,7 @@ export interface RemoteBrowserApi {
   closeTab: (tabId: string) => Promise<void>;
 
   setViewport: (width: number, height: number) => Promise<void>;
+  sendResizeViewport: (width: number, height: number) => Promise<void>;
   sendMouseClick: (x: number, y: number, button?: 'left' | 'right' | 'middle') => Promise<void>;
   sendMouseDown: (x: number, y: number, button?: 'left' | 'right' | 'middle') => Promise<void>;
   sendMouseUp: (x: number, y: number, button?: 'left' | 'right' | 'middle') => Promise<void>;
@@ -687,6 +688,10 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
     await post('/api/viewport', { width, height });
   }, [post]);
 
+  const sendResizeViewport = useCallback(async (width: number, height: number) => {
+    await post('/api/resize', { width, height });
+  }, [post]);
+
   // ─── Mouse / keyboard ────────────────────────────────────────────────────────
 
   const sendMouseClick = useCallback((x: number, y: number, button: 'left' | 'right' | 'middle' = 'left') =>
@@ -747,6 +752,7 @@ export function useRemoteBrowser(videoRef: React.RefObject<HTMLVideoElement>): R
     switchTab,
     closeTab,
     setViewport,
+    sendResizeViewport,
     sendMouseClick,
     sendMouseDown,
     sendMouseUp,

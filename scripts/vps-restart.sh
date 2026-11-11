@@ -398,13 +398,14 @@ fi
 # Mouse clicks are unaffected, which is why clicking works while typing does
 # not. A WM is what establishes focus and routes key events.
 #
-# We use xfwm4 (XFCE's window manager) with its compositor enabled, rather than
-# openbox. openbox has no compositor, and Tor Browser's rendering engine
-# (CompositorBridgeChild) crashes without one under Xvfb:
-#   CompositorBridgeChild receives IPC close with reason=AbnormalShutdown
-# xfwm4's compositor provides the rendering context Firefox-family browsers
-# (including Tor Browser) require. This adds ~5-10% CPU cost compared to
-# openbox.
+# We use xfwm4 (XFCE's window manager) WITHOUT its compositor enabled, rather
+# than openbox. openbox has no compositor and would crash Tor Browser's
+# CompositorBridgeChild. xfwm4's compositor is disabled (--compositor=off)
+# because it does CPU double-buffering of every window, which doubles CPU
+# cost per frame for headful streaming (main performance bottleneck).
+# NOTE: Openbox is preferred for pure Chromium streaming because it avoids
+# the xfwm4/XFCE package overhead entirely, at the cost of Firefox-family
+# browsers needing a compositor.
 if ! command -v xfwm4 >/dev/null 2>&1; then
   echo "Installing xfwm4..."
   apt-get update -qq
@@ -415,7 +416,7 @@ if ! command -v xfwm4 >/dev/null 2>&1; then
   echo "ERROR: xfwm4 failed to install"
 else
   echo "Starting xfwm4 (with compositor)..."
-  DISPLAY=:99 xfwm4 --compositor=on >/tmp/xfwm4.log 2>&1 &
+  DISPLAY=:99 xfwm4 --compositor=off >/tmp/xfwm4.log 2>&1 &
   sleep 1
   # Verify rather than assume, and use `pgrep -f` rather than `pgrep -x`:
   # -x matches the process NAME, which Linux truncates to 15 characters, so it
@@ -427,7 +428,19 @@ else
     echo "WARNING: xfwm4 failed to start — keyboard focus may not work"
   fi
 
-  # ── Prevent the window manager from dragging the browser window ──────────
+  # ── Cursor & display fixes ─────────────────────────────────────────────────────
+# Hide the X11 pointer entirely so it never appears in the x11grab capture or
+# shows up in the stream as a frozen ghost cursor. Run right after Xvfb starts.
+xsetroot -cursor_name blank &
+# Park any initialization residue out of the capture region (top-left corner)
+xdotool mousemove 0 0
+# ── Compositor: disable for max CPU headroom (FIX 4: 11 FPS performance) ───────
+# xfwm4's compositor does CPU double-buffering of every window. For headful
+# streaming this doubles CPU cost per frame. Pass --sm-disable when starting
+# Openbox as a fallback (openbox avoids double-buffering entirely), or disable
+# the compositor if staying with xfwm4:
+#   DISPLAY=:99 xfwm4 --compositor=off
+# (Openbox is preferred: it provides no compositor, bypassing XFCE's CPU cost.)
   # Symptom: a click on the browser titlebar is misread by the window manager
   # as the start of a window drag, shifting the whole browser off-center (to
   # the left) mid-session. Defeat it on two fronts:

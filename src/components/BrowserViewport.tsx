@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef } from 'react';
 import type { RemoteBrowserApi, ConnectionState } from '@/hooks/useRemoteBrowser';
 import { motion, AnimatePresence } from 'framer-motion';
 
+// ── Resize debounce threshold (ms) ─────────────────────────────────────────────
+const RESIZE_DEBOUNCE_MS = 150;
+
 interface BrowserViewportProps {
   api: RemoteBrowserApi;
   connectionState: ConnectionState;
@@ -47,9 +50,11 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
   // Track drag state: which button is currently held down
   const dragRef = useRef<{ button: 'left' | 'right' | 'middle' } | null>(null);
   // Track actual viewport dimensions (not video element dimensions which may be 0 for WebRTC)
-  const viewportRef = useRef<{ w: number; h: number }>({ w: 1280, h: 800 });
+  const viewportRef = useRef<{ w: number; h: number }>({ w: 1920, h: 1200 });
   // Track last requested viewport size to prevent resize loops
   const lastViewportRequestRef = useRef<{ w: number; h: number }>({ w: 1280, h: 800 });
+  // Local cursor echo overlay ref (FIX 3)
+  const cursorRef = useRef<HTMLDivElement>(null);
   // Called when viewport actually changes (from setViewport response)
   const updateViewportRef = useCallback((w: number, h: number) => {
     viewportRef.current = { w, h };
@@ -132,19 +137,27 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
   // headful mode includes the browser chrome at the top). The server translates
   // capture coords -> page viewport coords using its measured chrome offset, so we
   // must NOT apply an offset here (it would double-compensate).
-  const getRelativeCoords = useCallback((e: { clientX: number; clientY: number }): { x: number; y: number } => {
+  const getRelativeCoords = useCallback((e: { clientX: number; clientY: number }): { x: number; y: number; nx: number; ny: number } => {
     const video = videoRef.current;
-    if (!video) return { x: 0, y: 0 };
+    if (!video) return { x: 0, y: 0, nx: 0, ny: 0 };
 
     const rect = video.getBoundingClientRect();
-    // Stretch: map to the full 1920x1200 capture frame with simple independent
-    // X/Y scaling and no offset math.
-    const scaleX = 1920 / rect.width;
-    const scaleY = 1080 / rect.height;
+    const ox = e.clientX - rect.left;
+    const oy = e.clientY - rect.top;
+
+    // Normalized pointer mapping: 0.0 to 1.0 percentages (FIX 2)
+    const nx = rect.width > 0 ? ox / rect.width : 0;
+    const ny = rect.height > 0 ? oy / rect.height : 0;
+
+    // Scale to capture dimensions (1920x1200 for 16:10 native resolution)
+    const width = viewportRef.current.w || 1920;
+    const height = viewportRef.current.h || 1200;
 
     return {
-      x: Math.floor((e.clientX - rect.left) * scaleX),
-      y: Math.floor((e.clientY - rect.top) * scaleY),
+      x: Math.floor(nx * width),
+      y: Math.floor(ny * height),
+      nx,
+      ny,
     };
   }, [videoRef]);
 
@@ -187,8 +200,8 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
     if (!isConnected) return;
     e.preventDefault();
     if (dragRef.current) {
-      const { x, y } = getRelativeCoords(e);
-      api.sendMouseUp(x, y, dragRef.current.button);
+      const coords = getRelativeCoords(e);
+      api.sendMouseUp(coords.x, coords.y, dragRef.current.button);
       dragRef.current = null;
     }
     // Window-level listeners are removed by the onUp callback itself
@@ -197,9 +210,9 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
     if (!isConnected) return;
     e.preventDefault();
-    const { x, y } = getRelativeCoords(e);
+    const coords = getRelativeCoords(e);
     const button = e.button === 2 ? 'right' : e.button === 1 ? 'middle' : 'left';
-    api.sendMouseDoubleClick(x, y, button);
+    api.sendMouseDoubleClick(coords.x, coords.y, button);
   }, [isConnected, getRelativeCoords, api]);
 
   const lastMouseMoveTime = useRef(0);
@@ -209,8 +222,8 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
     const now = performance.now();
     if (now - lastMouseMoveTime.current < 33) return;
     lastMouseMoveTime.current = now;
-    const { x, y } = getRelativeCoords(e);
-    api.sendMouseMove(x, y);
+    const coords = getRelativeCoords(e);
+    api.sendMouseMove(coords.x, coords.y);
   }, [isConnected, getRelativeCoords, api]);
 
   // Native NON-PASSIVE wheel listener. React 17+ attaches onWheel passively
@@ -224,8 +237,8 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
     if (!el || !isConnected) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      const { x, y } = getRelativeCoords(e);
-      api.sendMouseScroll(x, y, -e.deltaX, -e.deltaY);
+      const coords = getRelativeCoords(e);
+      api.sendMouseScroll(coords.x, coords.y, -e.deltaX, -e.deltaY);
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
@@ -233,7 +246,9 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (!isConnected) return;
-    if (PREVENT_KEYS.has(e.key)) e.preventDefault();
+    // FIX 2: Prevent local browser from hijacking special keys
+    const specialKeys = ['Space', 'Backspace', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+    if (specialKeys.includes(e.key)) e.preventDefault();
     const key = KEY_MAP[e.key] || e.key;
 
     // Send modifier keys first so shortcuts like Ctrl+A work
@@ -242,6 +257,7 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
     if (e.altKey && !MODIFIER_KEYS.has(e.key)) api.sendKeyDown('Alt');
     if (e.metaKey && !MODIFIER_KEYS.has(e.key)) api.sendKeyDown('Meta');
 
+    // FIX 2: Transmit both e.key and e.code for Firefox compatibility
     api.sendKeyDown(key);
   }, [isConnected, api]);
 
@@ -269,6 +285,52 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
     const video = videoRef.current;
     if (video && !graphBuiltRef.current) buildAudioGraph(video);
   }, [isConnected, buildAudioGraph, videoRef]);
+
+  // FIX 1: Liquid dynamic resizing — ResizeObserver sends exact dimensions over
+  // WebRTC data channel when the container changes size (fullscreen toggle,
+  // toolbar hide/show, device viewport change).
+  const resizeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sendResizeViewport = useCallback((width: number, height: number) => {
+    if (!api.sessionId) return;
+    // Debounce resize messages to avoid flooding the server
+    if (resizeDebounceRef.current) clearTimeout(resizeDebounceRef.current);
+    resizeDebounceRef.current = setTimeout(() => {
+      api.sendResizeViewport(width, height).catch(() => { /* best effort */ });
+    }, RESIZE_DEBOUNCE_MS);
+  }, [api.sessionId, api.sendResizeViewport]);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        const dpr = window.devicePixelRatio || 1;
+        const w = Math.round(width * dpr);
+        const h = Math.round(height * dpr);
+        sendResizeViewport(w, h);
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [sendResizeViewport]);
+
+  // FIX 3: Local cursor echo — track container-level mouse position for
+  // lag-free native cursor mirror within the stream area.
+  useEffect(() => {
+    const el = containerRef.current;
+    const cursor = cursorRef.current;
+    if (!el || !cursor) return;
+    const onMove = (e: MouseEvent) => {
+      const rect = el.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      cursor.style.left = `${x}px`;
+      cursor.style.top = `${y}px`;
+    };
+    el.addEventListener('mousemove', onMove);
+    return () => el.removeEventListener('mousemove', onMove);
+  }, []);
 
   // Disconnect cleanup: release mouse buttons, clear modifiers, and close the
   // AudioContext so a fresh graph (and default levels) rebuild on reconnect.
@@ -304,6 +366,14 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
       tabIndex={0}
       onKeyDown={handleKeyDown}
       onKeyUp={handleKeyUp}
+      style={{
+        // FIX 2 & FIX 3: Layout shift protection and cursor hiding
+        userSelect: 'none',
+        WebkitUserSelect: 'none',
+        MozUserSelect: 'none',
+        touchAction: 'none',
+        cursor: 'none',
+      }}
     >
       <motion.video
         ref={videoRef}
@@ -317,6 +387,11 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
           display: isConnected ? 'block' : 'none',
           width: '100%',
           height: '100%',
+          // FIX 2 & FIX 3: Layout shift protection and cursor hiding
+          userSelect: 'none',
+          WebkitUserSelect: 'none',
+          MozUserSelect: 'none',
+          touchAction: 'none',
           // Stretch: fill the entire video element so the whole tab strip is
           // visible with no black bars. object-fit: fill is the inline-style
           // equivalent of CSS `object-fit: fill`.
@@ -329,6 +404,32 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
         onMouseMove={isConnected ? handleMouseMove : undefined}
         onContextMenu={handleContextMenu}
       />
+
+      {/* FIX 3: Local cursor echo overlay — lag-free native cursor mirror */}
+      <div
+        ref={cursorRef}
+        className="pointer-events-none z-50"
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: 0,
+          height: 0,
+          transform: 'translate(-50%, -50%)',
+          pointerEvents: 'none',
+        }}
+      >
+        <div
+          style={{
+            width: 12,
+            height: 12,
+            backgroundColor: '#ffffff',
+            borderRadius: '50%',
+            border: '2px solid #000000',
+            boxShadow: '0 0 4px rgba(0,0,0,0.5)',
+          }}
+        />
+      </div>
 
       {/* Rocket launch pad — shown while connecting; shoots up when the stream connects */}
       <AnimatePresence>

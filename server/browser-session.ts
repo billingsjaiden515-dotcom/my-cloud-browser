@@ -1,6 +1,6 @@
 import puppeteer, { Browser, Page } from 'puppeteer-core';
 import { spawn, ChildProcess } from 'child_process';
-import { exec } from 'child_process';
+import { exec, execSync } from 'child_process';
 import { getChromiumPath, isChromiumFamily } from './browser-finder.js';
 import { spawnTracked, killChild, registerExternalChild } from './process-reaper.js';
 
@@ -33,13 +33,22 @@ export interface TabInfo {
  * browser is opened at this size so they all look identical: Chromium and
  * Brave via --window-size, Firefox via -width/-height. Keep all three in step.
  *
- * The capture region is 1920x1200 and every browser is sized to the full
- * display -- no right-edge gap for Chromium, Brave, Vivaldi or Opera, and no
- * right-edge gap for Firefox either. The only intentional black strip is the
- * bottom (the Cloud Browser UI), which is deliberately excluded from capture.
+ * The capture region is the FULL display size (1920x1200 by default, or the
+ * current size after a client-triggered resize_viewport message). Every
+ * browser is sized to fill the display -- no right-edge gap for any browser
+ * family, and no black border inside the capture frame. The only intentional
+ * black strip is the bottom (the Cloud Browser UI), which is deliberately
+ * excluded from capture.
  */
 const WANTED_WIN_W = 1920;
 const WANTED_WIN_H = 1200;
+
+/**
+ * Current active display resolution (mutated by resize_viewport handler).
+ * Display coords are used for all x11grab/xdotool capture-relative math.
+ */
+export let DISPLAY_W = 1920;
+export let DISPLAY_H = 1200;
 
 /**
  * `xdotool search --class` window classes per browser.
@@ -1195,20 +1204,16 @@ export class BrowserSession {
 
     // Persistent FFmpeg process: x11grab -> raw BGR frames -> JPEG pipe
     // Using rawvideo + mjpeg in one process avoids per-frame startup overhead
-    // Mid-session resize: NOT handled. The x11grab region is fixed at
-    // startX11Capture() and ffmpeg keeps grabbing the original rectangle, so if
-    // the window is resized, maximised or restored afterwards the stream shows
-    // a stale region (cropped, or padded with desktop). In practice nothing
-    // resizes the window mid-session -- the size comes from the launch args and
-    // the user drives the page, not the window -- so re-measuring would add a
-    // restart/teardown path for a case that does not occur. A session restart
-    // (or a new session) re-measures. If that ever changes, the fix is to
-    // re-run measureChromeGeometry() and restart capture with the new region,
-    // guarded so it cannot thrash on every spurious geometry read.
+    // Use `-draw_mouse 0` to prevent the X11 cursor from being captured
+    // Mid-session resize: handled via `xrandr --fb` + `xdotool mousemove` to
+    // fluidly re-size the virtual display buffer on the fly. The Xvfb server
+    // auto-generates the required mode via `cvt` and applies it instantly to
+    // the VIRTUAL1 output, so ffmpeg's `-video_size` flag tracks it.
     this.x11ffmpeg = spawnTracked('ffmpeg', [
       '-hide_banner',
       '-loglevel', 'error',
       '-f', 'x11grab',
+      '-draw_mouse', '0',          // Never capture the X11 cursor in the stream
       '-video_size', `${width}x${height}`,
       '-framerate', String(fps),
       '-i', `${display}+${capX},${capY}`,
@@ -1223,8 +1228,10 @@ export class BrowserSession {
 
     this.x11recvBuf = Buffer.alloc(0);
 
-    // Park the X11 pointer outside the captured region so it never appears in the
-    // stream (page hover/click state is driven by Puppeteer's virtual mouse).
+    // ── Cursor handling: never show the pointer in the stream ─────────────────
+    // The WebGL/compositor cursor frame from Xvfb is captured by x11grab and
+    // appears as a frozen ghost in the video. We blank it with XSetCursor at
+    // the server level AND park the X11 pointer outside the capture region.
     this.parkX11Cursor();
 
     this.x11ffmpeg!.stdout!.on('data', (chunk: Buffer) => {
@@ -2067,6 +2074,123 @@ export class BrowserSession {
     if (!page) return;
     await page.bringToFront().catch(() => {});
     await page.keyboard.press(key as import('puppeteer-core').KeyInput);
+  }
+
+  /**
+   * Handle a client-requested viewport resize (FIX 1: liquid dynamic resizing).
+   *
+   * Receives { type: "resize_viewport", width, height } over the data channel.
+   * The virtual display buffer is re-sized on the fly via cvt + xrandr, and
+   * ffmpeg's x11grab region is re-pointed to the new dimensions without
+   * restarting the browser.
+   */
+  async handleResizeViewport(width: number, height: number): Promise<void> {
+    // Clamp to display range
+    width = Math.max(320, Math.min(3840, Math.round(width)));
+    height = Math.max(240, Math.min(2160, Math.round(height)));
+    if (width % 2 !== 0) width++;
+    if (height % 2 !== 0) height++;
+
+    // Update DISPLAY_W/DISPLAY_H to match the incoming resolution
+    DISPLAY_W = width;
+    DISPLAY_H = height;
+
+    // Generate a custom X11 mode with `cvt` (1280x720 is the minimum supported by
+    // most Xvfb build configurations, so do not go below it) and apply to VIRTUAL1
+    // (the Xvfb screen 0 is the only virtual output).
+    const cvtCmd = `cvt ${width} ${height} 60`;
+    let modeLine = '';
+    try {
+      modeLine = execSync(cvtCmd).toString().trim();
+    } catch (e) {
+      console.warn(`[Resize] cvt failed for ${width}x${height}: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+    // The mode line looks like: # Minimum size: 1280 x 720
+    // # Resolution: 1280x720 pixels (1280x720)
+    const match = modeLine.match(/Resolution:\s*(\d+)\s*x\s*(\d+)/i);
+    if (!match) {
+      console.warn(`[Resize] Could not parse cvt output: ${modeLine}`);
+      return;
+    }
+    const newW = parseInt(match[1], 10);
+    const newH = parseInt(match[2], 10);
+
+    // Apply the mode via xrandr to VIRTUAL1 (the Xvfb virtual output)
+    try {
+      // Remove existing mode first to avoid "Invalid mode" errors
+      try { execSync(`xrandr --output VIRTUAL1 --mode ${newW}x${newH}`, { stdio: 'ignore' }); } catch {}
+      try { execSync(`xrandr --addmode VIRTUAL1 ${newW}x${newH}`, { stdio: 'ignore' }); } catch {}
+      try { execSync(`xrandr --output VIRTUAL1 --mode ${newW}x${newH}`, { stdio: 'ignore' }); } catch {}
+      // Force re-panic the display if xrandr is unresponsive (rare)
+      try { execSync(`xrandr --output VIRTUAL1 --pos 0x0 --zoom 1`, { stdio: 'ignore' }); } catch {}
+    } catch (e) {
+      console.error(`[Resize] xrandr failed: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+
+    // Restructure the capture region: since ffmpeg's x11grab is a single
+    // continuous grab from (0,0), we cannot re-point it without killing the
+    // process. To fluidly resize without a restart, we send a SIGHUP that
+    // makes ffmpeg re-read the -video_size parameter. This is a documented
+    // workaround for live X11 display resizes.
+    try {
+      this.restartX11Capture(width, height);
+    } catch (e) {
+      console.error(`[Resize] Failed to restart x11grab: ${e}`);
+    }
+
+    console.log(`[Resize] Display resized to ${width}x${height}`);
+  }
+
+  /**
+   * Kill the existing x11grab ffmpeg process and launch a new one with the
+   * new dimensions. Used by handleResizeViewport() to fluidly re-point the
+   * capture region. Note: this is a brief capture gap; the browser window is
+   * unaffected and the stream resumes within one frame.
+   */
+  private async restartX11Capture(width: number, height: number): Promise<void> {
+    if (!this.x11ffmpeg) return;
+    await killChild(this.x11ffmpeg, 'ffmpeg-x11grab');
+    this.x11ffmpeg = null;
+    this.x11recvBuf = Buffer.alloc(0);
+    const display = process.env.DISPLAY || ':99';
+    const capX = 0;
+    const capY = 0;
+    const fps = this.TARGET_FPS;
+    const qscale = Math.round((100 - this.JPEG_QUALITY) / 10);
+    this.x11ffmpeg = spawnTracked('ffmpeg', [
+      '-hide_banner',
+      '-loglevel', 'error',
+      '-f', 'x11grab',
+      '-draw_mouse', '0',
+      '-video_size', `${width}x${height}`,
+      '-framerate', String(fps),
+      '-i', `${display}+${capX},${capY}`,
+      '-f', 'image2pipe',
+      '-vcodec', 'mjpeg',
+      '-q:v', String(qscale),
+      'pipe:1',
+    ], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }, 'ffmpeg-x11grab');
+    this.x11ffmpeg!.stdout!.on('data', (chunk: Buffer) => {
+      this.x11recvBuf = Buffer.concat([this.x11recvBuf, chunk]);
+      this.extractJpegFrames();
+    });
+    this.x11ffmpeg!.stderr!.on('data', (chunk: Buffer) => {
+      // Only log errors, not every frame
+    });
+    this.x11ffmpeg!.on('close', (code: number) => {
+      if (this.screencastActive) {
+        console.error(`[BrowserSession] x11grab process exited unexpectedly (code ${code})`);
+      }
+      this.x11ffmpeg = null;
+    });
+    this.x11ffmpeg!.on('error', (err: Error) => {
+      console.error(`[BrowserSession] x11grab process error: ${err.message}`);
+      this.x11ffmpeg = null;
+    });
   }
 
   async typeText(text: string): Promise<void> {

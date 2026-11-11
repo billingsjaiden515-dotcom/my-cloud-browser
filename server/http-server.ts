@@ -3,6 +3,7 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync } from 'fs';
+import { exec, execSync } from 'child_process';
 import { SessionManager } from './session-manager.js';
 import { SignalingServer } from './signaling-server.js';
 import { getBrowserInfo } from './browser-finder.js';
@@ -255,6 +256,22 @@ export function createServer(): { server: http.Server; sessionManager: SessionMa
       res.json({ tabs, activeTabId });
     } catch (e) {
       res.status(500).json({ error: 'tab_list_failed', message: e instanceof Error ? e.message : 'Unknown' });
+    }
+  });
+
+  // ─── Resize (FIX: liquid dynamic resizing) ──────────────────────────────────
+  app.post('/api/resize', async (req, res) => {
+    try {
+      const { sessionId, width, height } = req.body as {
+        sessionId: string; width: number; height: number;
+      };
+      const browser = sessionManager.getBrowser(sessionId);
+      if (!browser) { res.status(404).json({ error: 'session_not_found' }); return; }
+      await browser.handleResizeViewport(width, height);
+      res.json({ ok: true, width, height });
+    } catch (e) {
+      console.error('[HTTP] /api/resize failed:', e);
+      res.status(500).json({ error: 'resize_failed', message: e instanceof Error ? e.message : String(e) });
     }
   });
 

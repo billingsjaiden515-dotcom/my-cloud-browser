@@ -78,6 +78,9 @@ export class Vp8Encoder extends EventEmitter {
     // -cpu-used is the single biggest libvpx CPU lever; 8 is the fastest
     // realtime setting, 6 is visibly sharper but costs noticeably more CPU.
     const cpuUsed = process.env.VP8_CPU_USED || '8';
+    // -threads is the single biggest libvpx CPU lever. 2 threads is minimal;
+    // set to 4 for 1200p/1080p to keep up with the frame rate.
+    const threads = process.env.VP8_THREADS || '2';
     // No -minrate (VBR under -maxrate cap) lets libvpx allocate bits for motion.
     // -qmin/-qmax bound quality so motion scenes don't collapse into blockiness.
     this.ffmpeg = spawnTracked('ffmpeg', [
@@ -92,11 +95,7 @@ export class Vp8Encoder extends EventEmitter {
       '-maxrate', bitrate,
       '-deadline', 'realtime',
       '-cpu-used', cpuUsed,
-      // NOTE: -row-mt and -tile-columns are VP9-only options in FFmpeg's libvpx
-      // wrapper — VP8 rejects them, which kills the encoder at spawn and breaks
-      // video entirely. Do not add them back.
-      // -threads is generic, always accepted, and safe for VP8.
-      '-threads', process.env.VP8_THREADS || '2',
+      '-threads', threads,
       '-lag-in-frames', '0',
       '-error-resilient', '1',
       '-auto-alt-ref', '0',
