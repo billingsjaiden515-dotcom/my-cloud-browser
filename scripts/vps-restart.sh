@@ -80,12 +80,12 @@ fi
 # If xdotool was previously used for clicks, it is no longer needed.
 
 # ── Xvfb: fixed maximum canvas, never changed ─────────────────────────────
-# Xvfb is started once at 1920x1200x24. The capture region is the full
+# Xvfb is started once at 1920x1080x24. The capture region is the full
 # display and never resized. Chromium window size is set independently via
 # --window-size below; the two are unrelated.
 if ! pgrep -f "Xvfb.*:99" >/dev/null 2>&1; then
   echo "  starting Xvfb..."
-  Xvfb :99 -screen 0 1920x1200x24 &
+  Xvfb :99 -screen 0 1920x1080x24 &
   sleep 1
   # Verify Xvfb started
   if ! pgrep -f "Xvfb.*:99" >/dev/null 2>&1; then

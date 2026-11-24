@@ -41,14 +41,14 @@ export interface TabInfo {
  * excluded from capture.
  */
 const WANTED_WIN_W = 1920;
-const WANTED_WIN_H = 1200;
+const WANTED_WIN_H = 1080;
 
 /**
  * Current active display resolution (mutated by resize_viewport handler).
  * Display coords are used for all x11grab/xdotool capture-relative math.
  */
 export let DISPLAY_W = 1920;
-export let DISPLAY_H = 1200;
+export let DISPLAY_H = 1080;
 
 /**
  * `xdotool search --class` window classes per browser.
