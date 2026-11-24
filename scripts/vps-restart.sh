@@ -73,8 +73,10 @@ else
   echo "  no ICE config at $ICE_ENV_FILE — using host candidates only"
 fi
 
-# ── Window manager: NONE ──────────────────────────────────────────────────
-# No window manager is launched. Chromium is started with a fixed geometry
+# ── Window manager: OpenBox ───────────────────────────────────────────────
+# OpenBox is launched to manage window placement and provide a titlebar.
+# Chromium is started with a fixed geometry; the window manager ensures
+# proper placement and enables window-level input (clicks, etc.).
 # and no WM means no titlebar, no compositing, no double-buffering CPU cost.
 # Input is handled entirely via CDP (puppeteer) — see Chromium launch args.
 # If xdotool was previously used for clicks, it is no longer needed.
@@ -96,82 +98,10 @@ if ! pgrep -f "Xvfb.*:99" >/dev/null 2>&1; then
 else
   echo "  Xvfb already running"
 fi
+
+# Start OpenBox window manager (needed for window management, titlebars,
+# click handling, and to prevent the "black screen" issue where Chromium
+# without a WM can fail to render properly in headful mode under Xvfb)
+openbox &
+
 DISPLAY=:99 node dist-server/server/main.js &
-
-# ── Compositor: deliberately disabled ─────────────────────────────────────
-# No window manager = no compositor = no CPU double-buffering. Chromium
-# runs full-screen with --kiosk-mode or --window-size and manages its own
-# rendering. No xfwm4, no openbox.
-
-
-
-
-
-
-
-
-
-
-
-
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-
-)
-
-
- 
-
-
-
-
-
-
-
-# ── PulseAudio: capture-only sink ─────────────────────────────────────────
-# Set up a null sink named 'cloud_sink' for PulseAudio capture. This is
-# optional and idempotent; if it already exists the `pactl` commands are
-# no-ops suppressed by `|| true`.
-echo "  setting up PulseAudio capture sink..."
-pactl load-module module-null-sink sink_name=cloud_sink rate=48000 channels=2 >/dev/null 2>&1 || true
-pactl set-default-sink cloud_sink >/dev/null 2>&1 || true
-pactl set-default-source cloud_sink.monitor >/dev/null 2>&1 || true
-export PULSE_CAPTURE_SOURCE=cloud_sink.monitor
-
-# ── Record the new server's process group ─────────────────────────────────
-# So the NEXT run can kill it in one shot instead of chasing individual PIDs.
-NODE_PID=$(pgrep -f "node.*dist-server/server/main.js" 2>/dev/null | head -1 || true)
-if [ -n "$NODE_PID" ]; then
-  CUR_PGID=$(ps -o pgid= -p "$NODE_PID" 2>/dev/null | tr -d ' ')
-  if [ -n "$CUR_PGID" ]; then
-    echo "$CUR_PGID" > /tmp/cloud-browser-server.pgid
-    echo "  recorded process group $CUR_PGID for pid $NODE_PID"
-  fi
-fi
-
-# ── Verify ────────────────────────────────────────────────────────────────
-echo ""
-if curl -s http://localhost:3001/api/session/status >/dev/null 2>&1; then
-  echo ""
-  echo "=== Restart Successful! ==="
-  echo "Access at: http://$(curl -s ifconfig.me):3001/"
-else
-  echo "ERROR: Server failed to start. Check server.log:"
-  tail -20 server.log
-fi
