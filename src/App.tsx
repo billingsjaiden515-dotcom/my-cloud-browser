@@ -945,28 +945,28 @@ export default function App() {
                   onClick={handleGoBack}
                   disabled={!isConnected}
                   title="Back"
-                  className="flex items-center justify-center w-6 h-6 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                  style={{ color: 'var(--muted)', background: 'transparent' }}
+                  className="p-2 rounded-full hover:bg-white/10 text-gray-300 hover:text-white transition-colors cursor-pointer"
+                  style={{ color: 'white', background: 'transparent' }}
                 >
-                  <ArrowLeft className="w-3 h-3" />
+                  <ArrowLeft className="w-5 h-5 stroke-[2.5]" />
                 </button>
                 <button
                   onClick={handleGoForward}
                   disabled={!isConnected}
                   title="Forward"
-                  className="flex items-center justify-center w-6 h-6 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                  style={{ color: 'var(--muted)', background: 'transparent' }}
+                  className="p-2 rounded-full hover:bg-white/10 text-gray-300 hover:text-white transition-colors cursor-pointer"
+                  style={{ color: 'white', background: 'transparent' }}
                 >
-                  <ArrowRight className="w-3 h-3" />
+                  <ArrowRight className="w-5 h-5 stroke-[2.5]" />
                 </button>
                 <button
                   onClick={handleReload}
                   disabled={!isConnected}
                   title="Refresh"
-                  className="flex items-center justify-center w-6 h-6 rounded-md transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                  style={{ color: 'var(--muted)', background: 'transparent' }}
+                  className="p-2 rounded-full hover:bg-white/10 text-gray-300 hover:text-white transition-colors cursor-pointer"
+                  style={{ color: 'white', background: 'transparent' }}
                 >
-                  <RotateCcw className="w-3 h-3" />
+                  <RotateCcw className="w-5 h-5 stroke-[2.5]" />
                 </button>
                 <Globe className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--muted)' }} />
                 <input
@@ -1083,7 +1083,7 @@ export default function App() {
               borderTop: 'none',
             }}
           >
-            <Eye className="w-3 h-3" />
+            <Eye className="w-5 h-5 stroke-[2.5]" />
             Show toolbar
           </button>
         </div>
@@ -1184,8 +1184,8 @@ export default function App() {
                 {t.label}
                 {t.value === 'system' && (
                   window.matchMedia('(prefers-color-scheme: dark)').matches
-                    ? <Moon className="w-3 h-3 ml-auto opacity-50" />
-                    : <Sun className="w-3 h-3 ml-auto opacity-50" />
+                    ? <Moon className="w-5 h-5 stroke-[2.5] ml-auto opacity-50" />
+                    : <Sun className="w-5 h-5 stroke-[2.5] ml-auto opacity-50" />
                 )}
               </button>
             ))}
@@ -1260,7 +1260,7 @@ export default function App() {
               className="w-full px-3 py-1.5 text-xs border rounded-lg transition-colors cursor-pointer"
               style={{ borderColor: 'var(--border)', color: 'var(--muted)', borderRadius: '0.5rem' }}
             >
-              <SlidersHorizontal className="w-3 h-3 mr-2" /> Reset to Defaults
+              <SlidersHorizontal className="w-5 h-5 stroke-[2.5] mr-2" /> Reset to Defaults
             </button>
           </div>
           {/* ─── Stream tab ─── */}
@@ -1420,7 +1420,7 @@ export default function App() {
             className="w-full px-3 py-1.5 text-xs border rounded-lg transition-colors cursor-pointer text-red-400"
             style={{ borderColor: 'var(--border)', borderRadius: '0.5rem' }}
           >
-            <X className="w-3 h-3 mr-2" /> Reset overrides
+            <X className="w-5 h-5 stroke-[2.5] mr-2" /> Reset overrides
           </button>
 
           <div className="pt-1 border-t" style={{ borderColor: 'var(--border)' }}>
