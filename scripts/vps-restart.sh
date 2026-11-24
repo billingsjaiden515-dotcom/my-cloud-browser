@@ -96,75 +96,53 @@ if ! pgrep -f "Xvfb.*:99" >/dev/null 2>&1; then
 else
   echo "  Xvfb already running"
 fi
+DISPLAY=:99 node dist-server/server/main.js &
 
 # ── Compositor: deliberately disabled ─────────────────────────────────────
 # No window manager = no compositor = no CPU double-buffering. Chromium
 # runs full-screen with --kiosk-mode or --window-size and manages its own
 # rendering. No xfwm4, no openbox.
 
-# ── Launch Chromium ───────────────────────────────────────────────────────
-# Fixed window size and position. No --enable-automation (keeps the
-# "controlled by automated test software" bar from appearing).
-echo "  launching Chromium..."
-# Use the first available browser from the dropdown order.
-BROWSER="chromium"
-export DISPLAY=:99
 
-# Chromium args:
-# --remote-debugging-port=9222  -> CDP over WebSocket for server control
-# --window-position=0,0         -> place at top-left (no titlebar/WM needed)
-# --window-size=1280,720        -> fixed internal canvas size (16:10 ratio)
-# --disable-infobars          -> remove "managed by" banner
-# --no-sandbox                -> required for many VPS environments
-# --disable-dev-shm-usage     -> avoid OOM in /dev/shm
-# --disable-gpu               -> software fallback (helps on some VPS GPUs)
-# --no-zygote                 -> simpler launch path
-# --single-process            -> simpler launch path (no child processes)
-# --aggressive-dom-flushing   -> keep memory low
-# --disable-animations        -> slight CPU savings
-# --disable-threaded-scrolling -> slightly more CPU but simpler
-# --disable-compositing-mode-animations -> slight CPU savings
-# --disable-background-timer-throttling -> keep CPU awake if needed
-# --disable-renderer-backgrounding -> keep renderer alive
-# --disable-features=Translate -> simple i18n
-# --memory-pressure-off -> keep memory allocated
 
-ExecStartCmd=(
-  "$BROWSER"
-  "--remote-debugging-port=9222"
-  "--window-position=0,0"
-  "--window-size=1280,720"
-  "--disable-infobars"
-  "--no-sandbox"
-  "--disable-dev-shm-usage"
-  "--disable-gpu"
-  "--no-zygote"
-  "--single-process"
-  "--aggressive-dom-flushing"
-  "--disable-animations"
-  "--disable-threaded-scrolling"
-  "--disable-compositing-mode-animations"
-  "--disable-background-timer-throttling"
-  "--disable-renderer-backgrounding"
-  "--disable-features=Translate"
-  "--memory-pressure-off"
+
+
+
+
+
+
+
+
+
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+
 )
 
-# shellcheck disable=SC2086  # intentional quoting of array
-"$ExecStartCmd[@]" &>/tmp/chromium-launch.log &
 
-# Give Chromium time to start
-sleep 5
+ 
 
-# Quick health check: is the debug port listening?
-if curl -s http://localhost:9222/json/version >/dev/null 2>&1; then
-  echo "  Chromium CDP port open on :9222"
-else
-  echo "  WARNING: Chromium CDP port not responding after 5s"
-  # Don't exit — Chromium may still be functional
-fi
 
-echo "  Chromium launched with args: $BROWSER --remote-debugging-port=9222 --window-position=0,0 --window-size=1280,720"
+
+
+
+
 
 # ── PulseAudio: capture-only sink ─────────────────────────────────────────
 # Set up a null sink named 'cloud_sink' for PulseAudio capture. This is
