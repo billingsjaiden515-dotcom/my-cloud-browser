@@ -53,8 +53,6 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
   const viewportRef = useRef<{ w: number; h: number }>({ w: 1920, h: 1200 });
   // Track last requested viewport size to prevent resize loops
   const lastViewportRequestRef = useRef<{ w: number; h: number }>({ w: 1280, h: 800 });
-  // Local cursor echo overlay ref (FIX 3)
-  const cursorRef = useRef<HTMLDivElement>(null);
   // Called when viewport actually changes (from setViewport response)
   const updateViewportRef = useCallback((w: number, h: number) => {
     viewportRef.current = { w, h };
@@ -338,23 +336,6 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
     return () => { dc.onmessage = null; };
   }, [videoRef, api.dataChannelRef]);
 
-  // FIX 3: Local cursor echo — track container-level mouse position for
-  // lag-free native cursor mirror within the stream area.
-  useEffect(() => {
-    const el = containerRef.current;
-    const cursor = cursorRef.current;
-    if (!el || !cursor) return;
-    const onMove = (e: MouseEvent) => {
-      const rect = el.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      cursor.style.left = `${x}px`;
-      cursor.style.top = `${y}px`;
-    };
-    el.addEventListener('mousemove', onMove);
-    return () => el.removeEventListener('mousemove', onMove);
-  }, []);
-
   // Disconnect cleanup: release mouse buttons, clear modifiers, and close the
   // AudioContext so a fresh graph (and default levels) rebuild on reconnect.
   useEffect(() => {
@@ -390,12 +371,11 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
       onKeyDown={handleKeyDown}
       onKeyUp={handleKeyUp}
       style={{
-        // FIX 2 & FIX 3: Layout shift protection and cursor hiding
+        // Layout shift protection
         userSelect: 'none',
         WebkitUserSelect: 'none',
         MozUserSelect: 'none',
         touchAction: 'none',
-        cursor: 'none',
       }}
     >
       <motion.video
@@ -410,9 +390,8 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
           display: isConnected ? 'block' : 'none',
           width: '100%',
           height: '100%',
-          // FIX 1: cursor auto so server-controlled cursor_change can override;
+          cursor: 'default',
           // object-fit fill keeps 1:1 aspect ratio with no black voids.
-          cursor: 'auto !important',
           objectFit: 'fill',
           objectPosition: 'center',
           userSelect: 'none',
@@ -425,33 +404,6 @@ export function BrowserViewport({ api, connectionState, videoRef, immersive, vol
         onMouseMove={isConnected ? handleMouseMove : undefined}
         onContextMenu={handleContextMenu}
       />
-
-      {/* FIX 3: Local cursor echo overlay — lag-free native cursor mirror */}
-      <div
-        ref={cursorRef}
-        className="pointer-events-none z-50"
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          width: 0,
-          height: 0,
-          transform: 'translate(-50%, -50%)',
-          pointerEvents: 'none',
-        }}
-      >
-        <div
-          style={{
-            width: 12,
-            height: 12,
-            backgroundColor: '#ffffff',
-            borderRadius: '50%',
-            border: '2px solid #000000',
-            boxShadow: '0 0 4px rgba(0,0,0,0.5)',
-          }}
-        />
-      </div>
-
       {/* Rocket launch pad — shown while connecting; shoots up when the stream connects */}
       <AnimatePresence>
         {isConnecting && (
